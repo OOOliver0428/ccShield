@@ -44,14 +44,31 @@ describe("DanmakuList.vue", () => {
     expect(rows[0]!.text()).toContain("hello world");
   });
 
-  it("shows [guard{level}] placeholder when guard_level > 0", () => {
+  it("renders GuardBadge with 总督 for guard_level=3", () => {
     const store = useDanmakuStore();
     store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 3 }));
 
     const wrapper = mount(DanmakuList);
     const badge = wrapper.find('[data-testid="guard-badge"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe("[guard3]");
+    expect(badge.text()).toBe("总督");
+    expect(wrapper.text()).not.toContain("[guard3]");
+  });
+
+  it("renders GuardBadge with 提督 for guard_level=2", () => {
+    const store = useDanmakuStore();
+    store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 2 }));
+
+    const wrapper = mount(DanmakuList);
+    expect(wrapper.find('[data-testid="guard-badge"]').text()).toBe("提督");
+  });
+
+  it("renders GuardBadge with 舰长 for guard_level=1", () => {
+    const store = useDanmakuStore();
+    store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 1 }));
+
+    const wrapper = mount(DanmakuList);
+    expect(wrapper.find('[data-testid="guard-badge"]').text()).toBe("舰长");
   });
 
   it("does NOT render a guard badge for guard_level=0", () => {
@@ -62,7 +79,7 @@ describe("DanmakuList.vue", () => {
     expect(wrapper.find('[data-testid="guard-badge"]').exists()).toBe(false);
   });
 
-  it("shows [{name} lv{level}] medal placeholder when medal present", () => {
+  it("renders FanMedal with name + level when medal is present", () => {
     const store = useDanmakuStore();
     store.addDanmaku(
       makeDanmaku(1, "hi", { medal: { name: "粉丝牌", level: 25 } }),
@@ -71,7 +88,9 @@ describe("DanmakuList.vue", () => {
     const wrapper = mount(DanmakuList);
     const medal = wrapper.find('[data-testid="medal-badge"]');
     expect(medal.exists()).toBe(true);
-    expect(medal.text()).toBe("[粉丝牌 lv25]");
+    expect(medal.text()).toContain("粉丝牌");
+    expect(medal.text()).toContain("25");
+    expect(wrapper.text()).not.toContain("[粉丝牌 lv25]");
   });
 
   it("does NOT render a medal badge when medal is null", () => {
@@ -82,7 +101,7 @@ describe("DanmakuList.vue", () => {
     expect(wrapper.find('[data-testid="medal-badge"]').exists()).toBe(false);
   });
 
-  it("renders SC items distinctly with price highlighted", () => {
+  it("renders SC items via SuperChatItem with price highlighted", () => {
     const store = useDanmakuStore();
     store.addSc(makeSc(7, "gift!", 500));
 
@@ -92,8 +111,8 @@ describe("DanmakuList.vue", () => {
     const price = wrapper.find('[data-testid="sc-price"]');
     expect(price.exists()).toBe(true);
     expect(price.text()).toBe("¥500");
-    expect(scRow.text()).toContain("user7");
-    expect(scRow.text()).toContain("gift!");
+    expect(scRow.find('[data-testid="sc-uname"]').text()).toBe("user7");
+    expect(scRow.find('[data-testid="sc-text"]').text()).toBe("gift!");
   });
 
   it("renders empty-state placeholder when no events", () => {
@@ -116,5 +135,60 @@ describe("DanmakuList.vue", () => {
     expect(wrapper.find('[data-testid="empty"]').exists()).toBe(true);
     expect(store.list).toHaveLength(0);
     expect(store.scList).toHaveLength(0);
+  });
+
+  it("auto-scrolls to the bottom on new danmaku when pinned", async () => {
+    const store = useDanmakuStore();
+
+    const wrapper = mount(DanmakuList, { attachTo: document.body });
+    const scrollRoot = wrapper.find('[data-testid="scroll-root"]').element as HTMLElement;
+
+    // Force scrollHeight > clientHeight so a meaningful scrollTop is possible.
+    Object.defineProperty(scrollRoot, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(scrollRoot, "clientHeight", {
+      configurable: true,
+      get: () => 100,
+    });
+    scrollRoot.scrollTop = 400; // pinned to bottom (500 - 400 - 100 = 0)
+
+    store.addDanmaku(makeDanmaku(1, "first"));
+    await wrapper.vm.$nextTick();
+    store.addDanmaku(makeDanmaku(2, "second"));
+    await wrapper.vm.$nextTick();
+
+    expect(scrollRoot.scrollTop).toBe(scrollRoot.scrollHeight);
+
+    wrapper.unmount();
+  });
+
+  it("respects user scroll-up and does NOT auto-scroll", async () => {
+    const store = useDanmakuStore();
+
+    const wrapper = mount(DanmakuList, { attachTo: document.body });
+    const scrollRoot = wrapper.find('[data-testid="scroll-root"]').element as HTMLElement;
+
+    Object.defineProperty(scrollRoot, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(scrollRoot, "clientHeight", {
+      configurable: true,
+      get: () => 100,
+    });
+    // User scrolled up — not pinned (500 - 0 - 100 = 400 > tolerance).
+    scrollRoot.scrollTop = 0;
+    await scrollRoot.dispatchEvent(new Event("scroll"));
+    await wrapper.vm.$nextTick();
+
+    store.addDanmaku(makeDanmaku(1, "after-scroll-up"));
+    await wrapper.vm.$nextTick();
+
+    // Should NOT have been moved to the bottom.
+    expect(scrollRoot.scrollTop).toBe(0);
+
+    wrapper.unmount();
   });
 });

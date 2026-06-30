@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useDanmakuStore } from "../stores/danmaku";
+import FanMedal from "./FanMedal.vue";
+import GuardBadge from "./GuardBadge.vue";
+import SuperChatItem from "./SuperChatItem.vue";
 
 /**
- * T14 — danmaku + SC list.
+ * T24 — danmaku + SC list, fully assembled.
  *
- * Renders the live chat buffer. Guard badges and medal icons are
- * intentionally placeholders — T22 ships the actual badge component,
- * T23 ships the actual medal component; we only emit their textual
- * stand-ins so the layout is end-to-end exercisable.
+ * Renders the live chat buffer. Each danmaku row may wear up to two
+ * badges:
+ *   * ``GuardBadge`` — fleet tier (舰长/提督/总督)
+ *   * ``FanMedal``   — channel fan-medal chip
+ *
+ * SuperChats render via ``SuperChatItem`` with their own price-tagged
+ * styling so they're visually distinguishable from organic chat.
  *
  * Auto-scroll behaviour: every time the list grows, we scroll the
  * container to the bottom — except when the user has scrolled up
@@ -57,10 +63,6 @@ function formatTs(ts: number): string {
   const pad = (n: number): string => n.toString().padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
-
-function formatPrice(price: number): string {
-  return `¥${price}`;
-}
 </script>
 
 <template>
@@ -88,34 +90,19 @@ function formatPrice(price: number): string {
         <div class="empty" data-testid="empty">还没有弹幕…</div>
       </template>
       <template v-else>
-        <div
-          v-for="(item, idx) in danmaku.scList"
+        <SuperChatItem
+          v-for="(sc, idx) in danmaku.scList"
           :key="`sc-${idx}`"
-          class="row sc-row"
-          data-testid="sc-row"
-        >
-          <span class="sc-price" data-testid="sc-price">{{ formatPrice(item.price) }}</span>
-          <span class="uname">{{ item.uname }}</span>
-          <span class="sep">:</span>
-          <span class="text">{{ item.text }}</span>
-          <span class="ts">{{ formatTs(item.ts) }}</span>
-        </div>
+          :sc="sc"
+        />
         <div
           v-for="(item, idx) in danmaku.list"
           :key="`d-${idx}`"
           class="row"
           data-testid="danmaku-row"
         >
-          <span
-            v-if="item.guard_level > 0"
-            class="guard"
-            data-testid="guard-badge"
-          >[guard{{ item.guard_level }}]</span>
-          <span
-            v-if="item.medal"
-            class="medal"
-            data-testid="medal-badge"
-          >[{{ item.medal.name }} lv{{ item.medal.level }}]</span>
+          <GuardBadge :level="item.guard_level" />
+          <FanMedal :medal="item.medal" />
           <span class="uname">{{ item.uname }}</span>
           <span class="sep">:</span>
           <span class="text">{{ item.text }}</span>
@@ -185,37 +172,5 @@ function formatPrice(price: number): string {
   color: var(--el-text-color-secondary, #c0c4cc);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-.guard {
-  display: inline-block;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: var(--el-color-warning-light-9, #fdf6ec);
-  color: var(--el-color-warning-dark-2, #b88230);
-  font-size: 11px;
-  font-weight: 600;
-}
-.medal {
-  display: inline-block;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: var(--el-color-primary-light-9, #ecf5ff);
-  color: var(--el-color-primary-dark-2, #337ecc);
-  font-size: 11px;
-  font-weight: 500;
-}
-.sc-row {
-  background: var(--el-color-danger-light-9, #fef0f0);
-  border-left: 3px solid var(--el-color-danger, #f56c6c);
-  padding: 4px 6px;
-  margin: 2px -6px;
-  border-radius: 4px;
-}
-.sc-row .sc-price {
-  font-weight: 700;
-  color: var(--el-color-danger, #f56c6c);
-}
-.sc-row .uname {
-  color: var(--el-color-danger-dark-2, #c45656);
 }
 </style>
