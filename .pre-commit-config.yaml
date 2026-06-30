@@ -1,0 +1,60 @@
+# pre-commit config — reccshield
+#
+# Uses `repo: local` for every hook so installation requires no network
+# (pre-commit's default remote-hook install is skipped). Hooks run on
+# every `git commit`; pass `--no-verify` to bypass.
+#
+# Install once:
+#   pip install pre-commit        # or: uv tool install pre-commit
+#   pre-commit install            # wires .git/hooks/pre-commit
+#
+# Run manually against all files:
+#   pre-commit run --all-files
+#
+# Why a local secret-scan hook:
+#   ccShield's COOKIE_AUTOBAN_SUMMARY.md:247 leaked a real SESSDATA. The
+#   cheap, fast, network-free gate is `scripts/check_secrets.sh` — it greps
+#   staged/working files for raw SESSDATA / bili_jct / BILI_JCT /
+#   DedeUserID patterns and blocks the commit if any match.
+#
+# Suppress a known synthetic match by appending `# secretscan-allow: <reason>`
+# to the offending line. See scripts/check_secrets.sh for details.
+
+# Minimum pre-commit version that supports `repo: local` + `stages`.
+minimum_pre_commit_version: "3.0.0"
+
+# Don't auto-run on push; explicit commit gate only.
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      # --- secret scan: the headline hook -------------------------------
+      - id: check-secrets
+        name: Secret scan (SESSDATA / bili_jct / DedeUserID)
+        # Run on every commit stage; pre-commit passes the list of staged
+        # files as positional args after `--paths`, which check_secrets.sh
+        # interprets as an explicit file list (CI / override mode).
+        entry: bash scripts/check_secrets.sh --paths
+        language: system
+        # `types: [text]` would skip .json / .md etc.; instead use no `types`
+        # filter so every staged file is scanned.
+        pass_filenames: true
+        stages: [pre-commit]
+
+      # --- cheap whitespace hygiene -------------------------------------
+      # Network-free, < 100 ms even on the whole repo. Catches trailing
+      # whitespace and missing final newlines that pollute diffs.
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        entry: bash -c 'for f in "$@"; do sed -i "s/[[:space:]]*$//" "$f"; done'
+        language: system
+        types: [text]
+        stages: [pre-commit]
+
+      - id: end-of-file-fixer
+        name: Ensure newline at EOF
+        entry: bash -c 'for f in "$@"; do [ -n "$(tail -c1 "$f")" ] && printf "\n" >> "$f"; done'
+        language: system
+        types: [text]
+        stages: [pre-commit]
