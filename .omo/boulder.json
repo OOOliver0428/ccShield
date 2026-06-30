@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "active_work_id": "reccshield-refactor",
+  "works": {
+    "reccshield-refactor": {
+      "work_id": "reccshield-refactor",
+      "active_plan": ".omo/plans/reccshield-refactor.md",
+      "plan_name": "reccshield-refactor",
+      "session_ids": ["codex:opencode-prometheus"],
+      "status": "active",
+      "worktree_path": null
+    }
+  }
+}

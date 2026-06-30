@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.basedpyright/
+
+# Node
+node_modules/
+dist/
+
+# Env / secrets — keep .env.example tracked, ignore everything else
+.env
+.env.*
+!.env.example
+
+# Backend test fixtures (kept out of accidental commits but allow dir creation)
+tests/fixtures/*.json
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Codegraph runtime cache (symlink to ~/.omo/codegraph/...)
+.codegraph

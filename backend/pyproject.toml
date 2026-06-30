@@ -1,0 +1,81 @@
+[project]
+name = "reccshield-backend"
+version = "0.1.0"
+description = "Bilibili live-room moderator tool — backend (FastAPI)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "reccshield contributors" },
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.27.0",
+    "websockets>=13.0",
+    "loguru>=0.7.2",
+    "brotli>=1.1.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "python-multipart>=0.0.12",
+    "pyahocorasick>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.7.0",
+    "basedpyright>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Defaults + a strict baseline. Specific rules can be relaxed later if needed.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",  # line length — handled by formatter / pyproject
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B", "SIM"]
+
+[tool.basedpyright]
+# Strict skeleton baseline. Tighten per-module as code lands.
+include = ["app", "tests"]
+exclude = ["**/.venv", "**/node_modules"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportPrivateImportUsage = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownParameterType = false
+reportMissingTypeArgument = false
+reportUnnecessaryTypeIgnoreComment = "warning"
