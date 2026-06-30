@@ -184,6 +184,61 @@ class AuthSession:
         self._state = AuthState.EXPIRED
         return self._state
 
+    async def mark_authenticated_after_login(
+        self,
+        sessdata: str,
+        bili_jct: str,
+        buvid3: str | None = None,
+    ) -> AuthState:
+        """Hot-reload the auth state after a successful QR or manual login.
+
+        Why this exists:
+            :data:`app.config.settings` is constructed at module-import
+            time. After we :func:`write_env_atomic` the freshly-acquired
+            cookies to disk, the in-memory ``settings`` still carries the
+            OLD (empty) cookie values. Re-firing :meth:`check_on_startup`
+            would therefore keep reading stale cookies, see them as
+            empty, and leave the state machine in ``NEEDS_LOGIN`` — the
+            QR / manual flow would appear successful yet
+            ``GET /auth/status`` still reports ``needs_login``.
+
+        What it does:
+            1. Writes the new ``SESSDATA`` / ``BILI_JCT`` (and optional
+               ``BUVID3``) onto the live :data:`app.config.settings`
+               singleton in-memory — same module the next
+               :meth:`check_on_startup` will read from via
+               :func:`_load_cookie_settings`.
+            2. Calls :meth:`check_on_startup` once. Because step 1 has
+               already populated the in-memory cookies, ``/nav`` is
+               actually called this time; cookies were just validated
+               by the B站 API on the QR / manual path, so we expect
+               ``AUTHENTICATED``.
+
+        Args:
+            sessdata: the cookie just persisted to ``.env``.
+            bili_jct: the csrf cookie just persisted to ``.env``.
+            buvid3: optional device fingerprint cookie. ``None`` leaves
+                the existing in-memory ``BUVID3`` value untouched (we
+                do not want to clear a previously-set BUVID3 with an
+                empty placeholder).
+
+        Returns:
+            The new auth state — ``AUTHENTICATED`` on the happy path,
+            ``EXPIRED`` if the cookies turned out stale (should never
+            happen because the QR / manual flow already validated them).
+        """
+        # Lazy import: keeps ``app.auth.session`` importable on cold
+        # paths where ``app.config`` is not yet present (mirrors the
+        # defensive style of :func:`_load_cookie_settings`).
+        from app.config import settings
+
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+
+        return await self.check_on_startup()
+
     def _resolve_cookies(self) -> tuple[str, str]:
         """Pick the override values if provided; otherwise read settings."""
         if self._sessdata_override is not None and self._bili_jct_override is not None:

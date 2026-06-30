@@ -44,12 +44,22 @@ def mock_auth_session(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     The ``/api/auth/status`` endpoint reads ``auth_session.state.value`` —
     tests can flip the state by mutating ``mock_auth_session.state``.
+
+    ``mark_authenticated_after_login`` is the post-login hot-reload
+    hook used by both ``/api/auth/qr/poll`` (success) and
+    ``/api/auth/manual`` (success). MagicMock(spec=…) does NOT auto
+    upgrade async methods to ``AsyncMock``, so we wire that explicitly
+    too — otherwise awaiting the auto-generated MagicMock would raise
+    ``TypeError: object MagicMock can't be used in 'await' expression``.
     """
     from app.auth.session import AuthSession, AuthState, NotAuthenticatedError
 
     session = MagicMock(spec=AuthSession)
     session.state = AuthState.NEEDS_LOGIN
     session.check_on_startup = AsyncMock(return_value=AuthState.NEEDS_LOGIN)
+    session.mark_authenticated_after_login = AsyncMock(
+        return_value=AuthState.NEEDS_LOGIN
+    )
 
     def _require() -> None:
         if session.state != AuthState.AUTHENTICATED:
@@ -290,7 +300,7 @@ def test_qr_poll_success_writes_env_and_triggers_state_refresh(
     tmp_path: Path,
     mock_auth_session: MagicMock,
 ) -> None:
-    """Successful poll → write_env_atomic called + auth_session.check_on_startup()
+    """Successful poll → write_env_atomic called + auth_session.mark_authenticated_after_login()
     re-fired (state refresh); response body is {status: "success"}."""
     env_file = tmp_path / ".env"
     env_file.write_text("ROOM_ID=22210347\n", encoding="utf-8")
@@ -328,9 +338,10 @@ def test_qr_poll_success_writes_env_and_triggers_state_refresh(
 
     monkeypatch.setattr("app.api.auth_routes.write_env_atomic", fake_write_env_atomic)
 
-    # Snapshot the await count BEFORE the request — the lifespan calls
-    # check_on_startup() on startup so the count is already ≥ 1.
-    before = mock_auth_session.check_on_startup.await_count
+    # Snapshot the await count BEFORE the request — the lifespan + any
+    # earlier route calls could have triggered mark_authenticated_after_login
+    # already; we just want to assert it gets called ONCE MORE by this poll.
+    before = mock_auth_session.mark_authenticated_after_login.await_count
 
     response = client.get(
         "/api/auth/qr/poll?qrcode_key=abc",
@@ -346,11 +357,13 @@ def test_qr_poll_success_writes_env_and_triggers_state_refresh(
     assert call["bili_jct"] == "new_bili_jct_value"
     assert call["env_path"] == env_file
 
-    # State refresh was triggered (at least one NEW check_on_startup call
-    # beyond the one fired by the lifespan).
-    after = mock_auth_session.check_on_startup.await_count
+    # State refresh was triggered (at least one NEW mark_authenticated_after_login
+    # call beyond whatever was fired before). The route no longer calls
+    # check_on_startup directly — it goes through mark_authenticated_after_login
+    # so the in-memory settings are updated first.
+    after = mock_auth_session.mark_authenticated_after_login.await_count
     assert after > before, (
-        "auth_session.check_on_startup must be re-fired after QR-poll success"
+        "auth_session.mark_authenticated_after_login must be re-fired after QR-poll success"
     )
 
 
@@ -464,3 +477,246 @@ def test_qr_poll_route_path_is_correct() -> None:
     assert "/auth/qr/start" in paths
     assert "/auth/status" in paths
     assert "/auth/manual" in paths
+
+
+# ---------------------------------------------------------------------------
+# 10. Hot-reload: a successful login MUST flip /auth/status to AUTHENTICATED
+#     within the SAME process. Regression: previous code only wrote the new
+#     cookies to .env but never updated the in-memory ``settings`` singleton,
+#     so ``check_on_startup`` kept reading the import-time empty cookies and
+#     ``/auth/status`` reported ``needs_login`` until the user restarted the
+#     backend.
+# ---------------------------------------------------------------------------
+
+
+def test_qr_poll_success_flips_auth_status_to_authenticated_in_same_process(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """After a successful QR-poll, ``GET /auth/status`` reports
+    ``authenticated`` WITHOUT a process restart.
+
+    Wire-up: ``mark_authenticated_after_login`` is mocked with a
+    ``side_effect`` that mutates ``session.state`` to AUTHENTICATED
+    and the live ``settings.SESSDATA/BILI_JCT`` to the new cookies
+    — mirroring what the real method does in production.
+    """
+    from app.api import auth_routes
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_qr_poll(http_client: Any, qrcode_key: str) -> dict[str, str]:
+        return {
+            "status": "success",
+            "sessdata": "fresh_sess",
+            "bili_jct": "fresh_jct",
+            "dede_user_id": "12345",
+        }
+
+    monkeypatch.setattr("app.api.auth_routes.qr_poll", fake_qr_poll)
+
+    def fake_write_env_atomic(
+        sessdata: str, bili_jct: str, buvid3: str | None, env_path: Path
+    ) -> None:
+        return None
+
+    monkeypatch.setattr("app.api.auth_routes.write_env_atomic", fake_write_env_atomic)
+
+    # Capture the pre-call state of the live settings module so we can
+    # verify the in-memory hot-reload touched it.
+    pre_sess = settings.SESSDATA
+    pre_jct = settings.BILI_JCT
+
+    # Mirror the real mark_authenticated_after_login side effect: the
+    # route-layer test cannot hit the real Bili client (no network) so
+    # we let the mock pretend it just verified the cookies.
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr(
+        "app.auth.session.auth_session",
+        mock_auth_session,
+    )
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    poll_resp = client.get(
+        "/api/auth/qr/poll?qrcode_key=abc",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert poll_resp.status_code == 200
+    assert poll_resp.json() == {"status": "success"}
+
+    assert settings.SESSDATA == "fresh_sess"
+    assert settings.BILI_JCT == "fresh_jct"
+    assert settings.SESSDATA != pre_sess
+    assert settings.BILI_JCT != pre_jct
+    assert mock_auth_session.state == AuthState.AUTHENTICATED
+
+    status_resp = client.get(
+        "/api/auth/status",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json() == {"state": "authenticated"}
+
+
+def test_manual_success_flips_auth_status_to_authenticated_in_same_process(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """After a successful ``/auth/manual`` POST, ``GET /auth/status`` reports
+    ``authenticated`` WITHOUT a process restart.
+
+    Plan B: user-pasted cookies validated by ``/nav`` inside
+    ``save_cookies_manual``; the route then hot-reloads the in-memory
+    settings + auth state.
+    """
+    from app.api import auth_routes
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_save_cookies_manual(
+        client: Any,
+        sessdata: str,
+        bili_jct: str,
+        buvid3: str | None,
+        env_path: Path,
+    ) -> dict[str, Any]:
+        return {"uname": "tester", "mid": 12345}
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
+    )
+
+    pre_sess = settings.SESSDATA
+    pre_jct = settings.BILI_JCT
+    pre_buvid = settings.BUVID3
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr(
+        "app.auth.session.auth_session",
+        mock_auth_session,
+    )
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    manual_resp = client.post(
+        "/api/auth/manual",
+        json={"sessdata": "manual_sess", "bili_jct": "manual_jct", "buvid3": "manual_buv"},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert manual_resp.status_code == 200
+    assert manual_resp.json() == {"uname": "tester", "mid": 12345}
+
+    assert settings.SESSDATA == "manual_sess"
+    assert settings.BILI_JCT == "manual_jct"
+    assert settings.BUVID3 == "manual_buv"
+    assert settings.SESSDATA != pre_sess
+    assert settings.BILI_JCT != pre_jct
+    assert settings.BUVID3 != pre_buvid
+    assert mock_auth_session.state == AuthState.AUTHENTICATED
+
+    status_resp = client.get(
+        "/api/auth/status",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json() == {"state": "authenticated"}
+
+
+def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """``/auth/manual`` with no ``buvid3`` still flips state — and leaves
+    any pre-existing ``settings.BUVID3`` untouched (we don't blank it
+    out just because the user didn't paste one this round).
+
+    Defensive: ``mark_authenticated_after_login`` treats ``buvid3=None``
+    as "do not touch the in-memory value". This test pins that contract
+    so a future change to eager-clear isn't silently introduced.
+    """
+    from app.api import auth_routes
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    # Seed BUVID3 so we can assert the manual flow that omits buvid3
+    # leaves the in-memory value intact. Mirrors a real session that
+    # had a buvid3 from a previous QR scan.
+    settings.BUVID3 = "preexisting_buvid3"
+
+    async def fake_save_cookies_manual(
+        client: Any,
+        sessdata: str,
+        bili_jct: str,
+        buvid3: str | None,
+        env_path: Path,
+    ) -> dict[str, Any]:
+        return {"uname": "tester", "mid": 12345}
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
+    )
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr("app.auth.session.auth_session", mock_auth_session)
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    try:
+        manual_resp = client.post(
+            "/api/auth/manual",
+            json={"sessdata": "manual_sess2", "bili_jct": "manual_jct2"},
+            headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+        )
+        assert manual_resp.status_code == 200
+        assert manual_resp.json() == {"uname": "tester", "mid": 12345}
+
+        assert settings.BUVID3 == "preexisting_buvid3"
+        assert settings.SESSDATA == "manual_sess2"
+        assert settings.BILI_JCT == "manual_jct2"
+        assert mock_auth_session.state == AuthState.AUTHENTICATED
+    finally:
+        # Module-level settings leaks across tests; restore to defaults
+        # so unrelated suites see a clean slate.
+        settings.SESSDATA = ""
+        settings.BILI_JCT = ""
+        settings.BUVID3 = None

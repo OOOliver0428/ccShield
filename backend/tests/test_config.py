@@ -133,16 +133,29 @@ def test_missing_env_file_uses_empty_defaults(tmp_path: Path) -> None:
 # Test 6 — No dual-path / PyInstaller logic in the config module.
 # --------------------------------------------------------------------------- #
 def test_no_dual_path_logic_in_app() -> None:
-    """`grep -rE 'frozen|get_external_path|resource_path' backend/app/` must be empty.
+    """`grep -rE 'sys\\.frozen|getattr\\(sys,\\s*['\\"]frozen|get_external_path|resource_path' app/` must be empty.
 
     Rejecting the ccShield config.py anti-pattern (lines 8-44) which branched
-    on PyInstaller's bundled-binary detection and walked multiple candidate
-    .env paths. Single-path loading is the whole point of this module.
+    on PyInstaller's bundled-binary detection (``sys.frozen`` /
+    ``getattr(sys, 'frozen')``) and walked multiple candidate .env paths
+    (``get_external_path`` / ``resource_path``). Single-path loading is the
+    whole point of this module.
+
+    The regex is PRECISE — it only matches the actual PyInstaller dual-path
+    anti-patterns, NOT the Python stdlib ``frozenset`` type (or any other
+    identifier that happens to start with ``frozen``). A false positive on
+    ``frozenset[str]`` (T8 introduced in :mod:`app.api.middleware`) would
+    defeat the purpose of the test as a regression guard.
     """
     if not CONFIG_FILE.exists():
         pytest.fail(f"{CONFIG_FILE} does not exist — TDD: write tests first, then impl")
     result = subprocess.run(
-        ["grep", "-rE", "frozen|get_external_path|resource_path", "app/"],
+        [
+            "grep",
+            "-rE",
+            "sys\\.frozen|getattr\\(sys,\\s*['\"]frozen|get_external_path|resource_path",
+            "app/",
+        ],
         cwd=str(BACKEND_ROOT),
         capture_output=True,
         text=True,

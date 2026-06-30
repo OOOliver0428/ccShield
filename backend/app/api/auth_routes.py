@@ -211,16 +211,24 @@ async def qr_poll_route(
         buvid3=None,
         env_path=_ENV_PATH,
     )
-    # ``check_on_startup`` reads from settings.SESSDATA / settings.BILI_JCT
-    # which still hold the old (empty) values at this point — that is a
-    # known limitation, not a bug to fix here. We still fire the call so
-    # the singleton's state is re-evaluated and C3 (cookie refresh) gets
-    # the EXPIRED→AUTHENTICATED transition the moment we re-read
-    # settings. Future work: hot-reload settings from disk after a
-    # successful QR login.
+    # Hot-reload the auth session: write the new cookies into the live
+    # ``settings`` singleton AND re-fire the startup check so the state
+    # machine reaches AUTHENTICATED without a process restart. See
+    # :meth:`AuthSession.mark_authenticated_after_login` for the full
+    # rationale (in short: ``check_on_startup`` reads from
+    # ``settings.SESSDATA`` / ``settings.BILI_JCT``, which still hold
+    # the import-time empty values until we mutate them).
     try:
-        await auth_session_module.auth_session.check_on_startup()
+        await auth_session_module.auth_session.mark_authenticated_after_login(
+            sessdata=sessdata,
+            bili_jct=bili_jct,
+            buvid3=None,
+        )
     except Exception:
+        # State-refresh failure MUST NOT mask the successful login — the
+        # .env is already on disk, the user IS authenticated on the next
+        # process restart; we just couldn't reach that state in this
+        # same process. Log and move on.
         logger.exception(
             "auth_routes.qr_poll_route: post-success state refresh failed"
         )
@@ -281,6 +289,25 @@ async def manual_cookies(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+    # Validation succeeded and .env is on disk — hot-reload the live
+    # ``settings`` singleton + re-fire the startup check so
+    # ``GET /auth/status`` reports ``authenticated`` in this same
+    # process. See :meth:`AuthSession.mark_authenticated_after_login`
+    # for the rationale.
+    try:
+        await auth_session_module.auth_session.mark_authenticated_after_login(
+            sessdata=body.sessdata,
+            bili_jct=body.bili_jct,
+            buvid3=body.buvid3,
+        )
+    except Exception:
+        # Same rationale as the QR-poll path: a state-refresh blip
+        # must not turn a successful login into a 5xx — the .env is
+        # already on disk. Log and move on.
+        logger.exception(
+            "auth_routes.manual_cookies: post-success state refresh failed"
+        )
 
     return ManualCookiesResponse(
         uname=cast(str, result["uname"]),
