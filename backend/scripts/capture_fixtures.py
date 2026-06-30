@@ -264,9 +264,9 @@ def _build_synthetic_nav() -> dict[str, JsonValue]:
             "isLogin": True,
             "uname": "fixture_capture_dry_run",
             "mid": 999999999,
-            "SESSDATA": "deadbeef" * 4,
-            "bili_jct": "cafef00d" * 4,
-            "DedeUserID": "abc12345",
+            "SESSDATA": "deadbeef" * 4,  # secretscan-allow: synthetic dry-run fixture
+            "bili_jct": "cafef00d" * 4,  # secretscan-allow: synthetic dry-run fixture
+            "DedeUserID": "abc12345",  # secretscan-allow: synthetic dry-run fixture
             "DedeUserID_ckMd5": "fffefdfc",
             "access_token": "eyJh" + "bcdc" * 8,
             "refresh_token": "eyJy" + "efab" * 8,
@@ -364,8 +364,8 @@ def dry_run(out_dir: Path) -> int:
             response_body=_build_synthetic_nav(),
             response_headers={
                 "set-cookie": (
-                    "SESSDATA=deadbeefdeadbeefdeadbeefdeadbeef; Path=/; "
-                    "HttpOnly; bili_jct=cafef00dcafef00dcafef00dcafef00d"
+                    "SESSDATA=deadbeefdeadbeefdeadbeefdeadbeef; Path=/; "  # secretscan-allow: synthetic dry-run fixture
+                    "HttpOnly; bili_jct=cafef00dcafef00dcafef00dcafef00d"  # secretscan-allow: synthetic dry-run fixture
                 ),
                 "content-type": "application/json",
             },

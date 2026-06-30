@@ -127,7 +127,7 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
 
     success_url = (
         "https://passport.biligame.com/x/passport-login/web/crossDomain"
-        "?DedeUserID=987654&Expires=1700000000"
+        "?DedeUserID=987654&Expires=1700000000"  # secretscan-allow: synthetic test fixture
         "&SESSDATA=fake_sessdata%2Cfake_sessdata"
         "&bili_jct=fake_bili_jct&gourl=https%3A%2F%2Fwww.bilibili.com"
     )

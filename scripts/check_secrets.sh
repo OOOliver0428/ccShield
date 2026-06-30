@@ -24,7 +24,7 @@
 #   Lines containing the marker comment `# secretscan-allow` (or
 #   `# secretscan: allow <reason>`) are skipped. Use this for synthetic
 #   test fixtures that intentionally contain fake-but-hex-shaped patterns
-#   (e.g., SESSDATA=deadbeefdeadbeef... in a redaction self-test).
+#   (e.g., SESSDATA=deadbeefdeadbeef... in a redaction self-test).  # secretscan-allow: documentation example
 #
 #   Example:
 #       "SESSDATA=deadbeefdeadbeefdeadbeefdeadbeef; "  # secretscan-allow: synthetic fixture
