@@ -1,5 +1,18 @@
 .PHONY: help install dev test lint clean
 
+# Ensure bun is on PATH even when invoked from environments that don't source
+# ~/.bashrc (e.g. make in a stripped-down subshell). This is a no-op if bun is
+# already on PATH.
+BUN_BIN ?= $(HOME)/.bun/bin
+ifeq ($(shell command -v bun 2>/dev/null),)
+  ifeq ($(wildcard $(BUN_BIN)/bun),)
+    $(warning bun not found — install via https://bun.sh/install or set BUN_BIN)
+  else
+    PATH := $(BUN_BIN):$(PATH)
+    export PATH
+  endif
+endif
+
 help:
 	@echo "reccshield monorepo"
 	@echo ""
