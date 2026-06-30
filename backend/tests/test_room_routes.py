@@ -47,15 +47,18 @@ Adversarial scenarios exercised:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Callable, Iterator
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.bilibili.client import BilibiliClient
 from app.config import settings
+from app.room.bridge import RoomBridge
 from app.room.events import (
+    BridgeEvent,
     DanmakuEvent,
     Medal,
     RoomStatusEvent,
@@ -74,7 +77,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_bridge_singleton() -> Any:
+def _isolated_bridge_singleton() -> Iterator[None]:
     """Reset the module-level room bridge singleton between tests.
 
     ``set_room_bridge(None)`` is the documented seam used both in
@@ -87,20 +90,44 @@ def _isolated_bridge_singleton() -> Any:
     room_routes.set_room_bridge(None)
 
 
-@pytest.fixture
-def fake_session_factory(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Replace ``_make_room_session`` with a builder that returns AsyncMocks.
+class _FakeFactory:
+    """Bundle of state captured by the :func:`fake_session_factory` fixture.
 
-    Returns a tuple ``(factory_calls, make_mock)``:
-
-    * ``factory_calls`` is a list populated with every ``bili_client``
-      the factory was invoked with — handy for asserting wiring.
-    * ``make_mock(connect_return=...)`` builds a fresh
-      ``AsyncMock(spec=RoomSession)`` with the right async return
-      values and a unique callback registry.
+    Holds the bookkeeping tests need to assert wiring without re-doing
+    ``monkeypatch`` calls themselves.
     """
 
-    factory_calls: list[Any] = []
+    factory_calls: list[BilibiliClient]
+    mocks: list[AsyncMock]
+    make: Callable[[], AsyncMock]
+
+    def __init__(
+        self,
+        factory_calls: list[BilibiliClient],
+        mocks: list[AsyncMock],
+        make_fn: Callable[[], AsyncMock],
+    ) -> None:
+        self.factory_calls = factory_calls
+        self.mocks = mocks
+        self.make = make_fn
+
+
+@pytest.fixture
+def fake_session_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> _FakeFactory:
+    """Replace ``_make_room_session`` with a builder that returns AsyncMocks.
+
+    Returns a :class:`_FakeFactory`:
+
+    * ``factory_calls`` is a list populated with every
+      ``bili_client`` the factory was invoked with — handy for
+      asserting wiring.
+    * ``make()`` builds a fresh ``AsyncMock(spec=RoomSession)`` with
+      the right async return values and a unique callback registry.
+    """
+
+    factory_calls: list[BilibiliClient] = []
     mocks: list[AsyncMock] = []
 
     def _build() -> AsyncMock:
@@ -108,18 +135,14 @@ def fake_session_factory(monkeypatch: pytest.MonkeyPatch) -> Any:
         mocks.append(mock)
         return mock
 
-    async def factory(bili_client: Any) -> AsyncMock:
+    async def factory(bili_client: BilibiliClient) -> AsyncMock:
         factory_calls.append(bili_client)
         return _build()
 
     from app.api import room_routes
 
     monkeypatch.setattr(room_routes, "_make_room_session", factory)
-    return type(
-        "_Fakes",
-        (),
-        {"factory_calls": factory_calls, "mocks": mocks, "make": _build},
-    )
+    return _FakeFactory(factory_calls=factory_calls, mocks=mocks, make_fn=_build)
 
 
 def _make_mock_session(
@@ -148,7 +171,7 @@ def _make_mock_session(
     # add_callback / remove_callback must accept any callable and return
     # a coroutine — match the real signature.
     async def _pass_through(
-        *args: Any, **kwargs: Any
+        *args: object, **kwargs: object
     ) -> None:  # pragma: no cover - trivial
         return None
 
@@ -160,11 +183,9 @@ def _make_mock_session(
 
 
 @pytest.fixture
-def mock_resolve_ok(monkeypatch: pytest.MonkeyPatch) -> Any:
+def mock_resolve_ok(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """Patch ``_get_bili_client`` so ``resolve_room_id`` returns a dict."""
-    from unittest.mock import AsyncMock
-
-    payload: dict[str, Any] = {
+    payload: dict[str, object] = {
         "room_id": 22210347,
         "short_id": 22210347,
         "uid": 12345,
@@ -179,7 +200,7 @@ def mock_resolve_ok(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     from app.api import room_routes
 
-    def _factory() -> Any:
+    def _factory() -> AsyncMock:
         return bili
 
     monkeypatch.setattr(room_routes, "_get_bili_client", _factory)
@@ -187,16 +208,14 @@ def mock_resolve_ok(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.fixture
-def mock_resolve_none(monkeypatch: pytest.MonkeyPatch) -> Any:
+def mock_resolve_none(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """Patch ``_get_bili_client`` so ``resolve_room_id`` returns None."""
-    from unittest.mock import AsyncMock
-
     bili = AsyncMock()
     bili.resolve_room_id = AsyncMock(return_value=None)
 
     from app.api import room_routes
 
-    def _factory() -> Any:
+    def _factory() -> AsyncMock:
         return bili
 
     monkeypatch.setattr(room_routes, "_get_bili_client", _factory)
@@ -204,7 +223,7 @@ def mock_resolve_none(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.fixture
-def app() -> Any:
+def app() -> FastAPI:
     """Build a fresh FastAPI app instance for these tests.
 
     Room routes have no lifespan side-effects (no HTTP client / no auth
@@ -217,7 +236,7 @@ def app() -> Any:
 
 
 @pytest.fixture
-def client(app: FastAPI) -> Any:
+def client(app: FastAPI) -> Iterator[TestClient]:
     """Run the app under TestClient WITH the lifespan (T8 precedent)."""
     with TestClient(app) as c:
         yield c
@@ -284,7 +303,7 @@ def test_resolve_returns_404_when_unresolvable(
 def test_start_returns_200_and_sets_bridge_when_connect_succeeds(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
-    fake_session_factory: Any,
+    fake_session_factory: _FakeFactory,
 ) -> None:
     """connect=True → 200 + singleton bridge is populated; ``connect`` was awaited."""
     from app.api import room_routes
@@ -296,7 +315,7 @@ def test_start_returns_200_and_sets_bridge_when_connect_succeeds(
     # Replace the factory's make() so the FIRST factory call returns OUR mock.
     original_factory = room_routes._make_room_session
 
-    async def factory_with_mock(bili: Any) -> Any:
+    async def factory_with_mock(bili: BilibiliClient) -> AsyncMock:
         await original_factory(bili)  # records the call
         return expected_mock
 
@@ -325,7 +344,7 @@ def test_start_returns_200_and_sets_bridge_when_connect_succeeds(
 def test_start_returns_400_when_connect_fails(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
-    fake_session_factory: Any,
+    fake_session_factory: _FakeFactory,
 ) -> None:
     """connect=False → 400 and the singleton bridge stays None."""
     from app.api import room_routes
@@ -335,7 +354,7 @@ def test_start_returns_400_when_connect_fails(
 
     original_factory = room_routes._make_room_session
 
-    async def factory_with_mock(bili: Any) -> Any:
+    async def factory_with_mock(bili: BilibiliClient) -> AsyncMock:
         await original_factory(bili)
         return expected_mock
 
@@ -404,8 +423,8 @@ def _install_bridge_with_history(
     monkeypatch: pytest.MonkeyPatch,
     *,
     active_room_id: int,
-    history: list[Any],
-) -> Any:
+    history: list[BridgeEvent],
+) -> RoomBridge:
     """Install a pre-loaded ``RoomBridge`` into the singleton for WS tests.
 
     Returns the installed :class:`RoomBridge` so callers can poke at
@@ -432,7 +451,7 @@ def test_ws_receives_history_snapshot_then_live_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WS connect → replay every history event as JSON → live broadcast is JSON."""
-    history: list[Any] = [
+    history: list[BridgeEvent] = [
         DanmakuEvent(
             type="danmaku",
             uid=1,
@@ -585,6 +604,72 @@ def test_openapi_lists_all_room_routes(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 9. WS auth — /api/ws/* must accept ?token=<LOCAL_TOKEN>.
+# ---------------------------------------------------------------------------
+#
+# The middleware code-path is identical for HTTP and WS; we drive it
+# with plain ``GET`` requests for test simplicity (the route is WS-only,
+# so anything past the guard returns 404).
+
+
+def test_ws_query_token_authenticates_under_api_prefix(
+    client: TestClient,
+) -> None:
+    """``?token=<LOCAL_TOKEN>`` on ``/api/ws/*`` passes the guard."""
+    response = client.get(
+        f"/api/ws/rooms/22210347?token={settings.LOCAL_TOKEN}",
+        headers={"Host": "localhost"},
+    )
+    assert response.status_code != 401
+
+
+def test_ws_without_token_under_api_prefix_returns_401(
+    client: TestClient,
+) -> None:
+    """No header, no query token → guard rejects with 401."""
+    response = client.get(
+        "/api/ws/rooms/22210347",
+        headers={"Host": "localhost"},
+    )
+    assert response.status_code == 401
+
+
+def test_ws_with_wrong_query_token_under_api_prefix_returns_401(
+    client: TestClient,
+) -> None:
+    """Wrong ``?token=`` value → guard rejects with 401."""
+    response = client.get(
+        "/api/ws/rooms/22210347?token=definitely-not-the-right-token",
+        headers={"Host": "localhost"},
+    )
+    assert response.status_code == 401
+
+
+def test_bare_ws_path_still_accepts_query_token(
+    client: TestClient,
+) -> None:
+    """The pre-existing ``/ws/*`` branch must keep working after the fix."""
+    response = client.get(
+        f"/ws/rooms/22210347?token={settings.LOCAL_TOKEN}",
+        headers={"Host": "localhost"},
+    )
+    assert response.status_code != 401, (
+        "middleware must accept ?token=<LOCAL_TOKEN> for /ws/* paths"
+    )
+
+
+def test_bare_ws_path_without_token_returns_401(
+    client: TestClient,
+) -> None:
+    """No token on ``/ws/*`` → guard rejects with 401."""
+    response = client.get(
+        "/ws/rooms/22210347",
+        headers={"Host": "localhost"},
+    )
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # Adversarial — WS disconnect → unregister_ws (no leak).
 # ---------------------------------------------------------------------------
 
@@ -594,7 +679,7 @@ def test_ws_disconnect_unregisters_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """On WS close the registry set is empty again (no client accumulates)."""
-    history: list[Any] = [
+    history: list[BridgeEvent] = [
         DanmakuEvent(
             type="danmaku",
             uid=1,
@@ -639,7 +724,7 @@ def test_broadcast_isolates_dead_ws_errors_and_unregisters_it(
     """If ``send_json`` raises on one client, the live ones still receive
     the event AND the broken client is removed from the registry.
     """
-    history: list[Any] = [
+    history: list[BridgeEvent] = [
         DanmakuEvent(
             type="danmaku",
             uid=1,
@@ -675,7 +760,7 @@ def test_broadcast_isolates_dead_ws_errors_and_unregisters_it(
 
             client_state = WebSocketState.CONNECTED
 
-            async def send_json(self, _payload: Any) -> None:
+            async def send_json(self, _payload: object) -> None:
                 raise RuntimeError("send_json: connection reset")
 
         dead = _DeadWS()
@@ -684,7 +769,7 @@ def test_broadcast_isolates_dead_ws_errors_and_unregisters_it(
             # Inject the dead peer directly into the registry — bypass
             # ``register_ws`` because that path tries the snapshot replay
             # first and would drop ``dead`` before the live-event path.
-            bridge._clients.add(dead)
+            bridge._clients.add(dead)  # type: ignore[arg-type]
             assert dead in bridge._clients
             event = DanmakuEvent(
                 type="danmaku",

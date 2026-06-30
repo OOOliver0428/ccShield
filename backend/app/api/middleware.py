@@ -23,11 +23,15 @@ Exempt paths (no guard, no token needed):
 
 WebSocket exemptions:
 
-- ``/ws/*`` endpoints cannot set custom headers reliably from the browser
+- WebSocket endpoints cannot set custom headers reliably from the browser
   (the browser WebSocket API exposes headers only on the same-origin
-  server, and only some clients honour ``Authorization``). For those
-  endpoints the middleware accepts ``?token=<settings.LOCAL_TOKEN>`` as a
-  query-string fallback. The Host guard still applies.
+  server, and only some clients honour ``Authorization``). For paths
+  matching ``/ws/*`` OR ``/api/ws/*`` the middleware accepts
+  ``?token=<settings.LOCAL_TOKEN>`` as a query-string fallback. The Host
+  guard still applies. The ``/api/ws/*`` branch covers T13's room-WS
+  endpoint, which is mounted under the ``/api`` APIRouter (so its real
+  URL is ``/api/ws/rooms/{room_id}``); the original ``/ws/*`` branch
+  remains for any future bare-mounted WS routes.
 
 Anti-pattern reference:
     ccShield routes.py:120-175 implemented a multi-user Bearer-token
@@ -163,20 +167,34 @@ def _token_matches(supplied: str, expected: str) -> bool:
     return secrets.compare_digest(supplied, expected)
 
 
+def _is_ws_path(path: str) -> bool:
+    """Return True for paths that may carry a WebSocket credential via query string.
+
+    The browser ``WebSocket`` API cannot reliably set the ``Authorization``
+    header, so WS endpoints must accept ``?token=<token>`` instead. Both
+    the bare ``/ws/*`` mount and the ``/api/ws/*`` mount (T13's room
+    bridge, mounted under :data:`app.api.api_router` with prefix
+    ``/api``) are recognized — the query-string fallback is the only
+    auth shape browser-side WS clients can use.
+    """
+    return path.startswith("/ws") or path.startswith("/api/ws")
+
+
 def _request_carries_valid_token(request: Request) -> bool:
     """Return True iff the request carries a valid LOCAL_TOKEN credential.
 
     Two accepted shapes:
 
     - HTTP/REST: ``Authorization: Bearer <token>`` header.
-    - WebSocket (``/ws/*``): ``?token=<token>`` query parameter, because
-      browser WebSocket clients cannot reliably set custom headers.
+    - WebSocket (``/ws/*`` or ``/api/ws/*``): ``?token=<token>`` query
+      parameter, because browser WebSocket clients cannot reliably set
+      custom headers.
     """
     expected: str = settings.LOCAL_TOKEN
     bearer: str | None = _extract_bearer(request.headers.get("authorization"))
     if bearer is not None:
         return _token_matches(bearer, expected)
-    if request.url.path.startswith("/ws"):
+    if _is_ws_path(request.url.path):
         query_token: str = request.query_params.get("token", "")
         if not query_token:
             return False
