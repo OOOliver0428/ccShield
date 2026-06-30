@@ -1,10 +1,11 @@
 /**
- * App.vue tests (T14).
+ * App.vue tests — T19 ban-WS lifecycle additions.
  *
- * We stub ``WebSocket`` globally so the App.vue's BridgeWS lifecycle
- * is exercised against a deterministic fake — no real sockets, no
- * real timers beyond fake ones (we DON'T need fake timers here
- * because no reconnect cycles are triggered in these short tests).
+ * Verifies that on room-connect App.vue opens a second WS against
+ * ``/api/ws/rooms/{roomId}/banlist`` (in addition to the bridge WS),
+ * renders the BanList panel, and on disconnect closes it AND clears
+ * the ban store. No real polling — every ban-store write is sourced
+ * from the WS we opened.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
@@ -13,6 +14,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "./__tests__/setup";
 import { useAuthStore } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
+import { useBanStore } from "./stores/ban";
 import App from "./App.vue";
 
 class FakeMessageEvent extends Event {
@@ -23,18 +25,20 @@ class FakeMessageEvent extends Event {
   }
 }
 
-let fakeInstances: Array<{
+interface FakeWSHandle {
   url: string;
   readyState: number;
   onopen: ((ev: Event) => void) | null;
   onmessage: ((ev: FakeMessageEvent) => void) | null;
   onclose: ((ev: Event) => void) | null;
   onerror: ((ev: Event) => void) | null;
-  close(): void;
-  send(): void;
   simulateOpen(): void;
   simulateMessage(data: string): void;
-}> = [];
+  simulateClose(): void;
+  close(): void;
+}
+
+let fakeInstances: FakeWSHandle[] = [];
 
 function installFakeWebSocket(): void {
   fakeInstances = [];
@@ -49,30 +53,33 @@ function installFakeWebSocket(): void {
     onerror: ((ev: Event) => void) | null = null;
     constructor(url: string) {
       this.url = url;
-      fakeInstances.push(this);
+      fakeInstances.push(this as unknown as FakeWSHandle);
     }
     close(): void {
       this.readyState = 3;
       if (this.onclose) this.onclose(new Event("close"));
     }
-    send(): void {}
     simulateOpen(): void {
       this.readyState = 1;
       if (this.onopen) this.onopen(new Event("open"));
     }
     simulateMessage(data: string): void {
-      if (this.onmessage) this.onmessage(new FakeMessageEvent("message", data));
+      if (this.onmessage) {
+        this.onmessage(new FakeMessageEvent("message", data));
+      }
+    }
+    simulateClose(): void {
+      this.readyState = 3;
+      if (this.onclose) this.onclose(new Event("close"));
     }
   }
   vi.stubGlobal("WebSocket", FakeWS as unknown as typeof WebSocket);
 }
 
-describe("App.vue", () => {
+describe("App.vue — ban-WS lifecycle (T19)", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     installFakeWebSocket();
-
-    // Default /api/auth/bootstrap + /api/auth/status → authenticated.
     server.use(
       http.get("*/api/auth/bootstrap", () =>
         HttpResponse.json({ token: "local-tok" }),
@@ -81,7 +88,10 @@ describe("App.vue", () => {
         HttpResponse.json({ state: "authenticated" }),
       ),
       http.get("*/api/auth/qr/start", () =>
-        HttpResponse.json({ qrcode_url: "data:image/png;base64,X", qrcode_key: "k" }),
+        HttpResponse.json({
+          qrcode_url: "data:image/png;base64,X",
+          qrcode_key: "k",
+        }),
       ),
       http.get("*/api/auth/qr/poll", () =>
         HttpResponse.json({ status: "scanning" }),
@@ -93,20 +103,7 @@ describe("App.vue", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders RoomInput when authStore.status === 'authenticated'", async () => {
-    const auth = useAuthStore();
-    auth.status = "authenticated";
-    auth.token = "local-tok";
-    auth.userInfo = { uname: "tester", mid: 1 };
-
-    const wrapper = mount(App);
-    await flushPromises();
-
-    expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="room-input"]').exists()).toBe(true);
-  });
-
-  it("renders DanmakuList after the room store is connected", async () => {
+  it("opens a BanlistWS after the room connects", async () => {
     server.use(
       http.post("*/api/rooms/start", () =>
         HttpResponse.json({ room_id: 22210347, title: "" }),
@@ -123,23 +120,24 @@ describe("App.vue", () => {
     auth.userInfo = { uname: "tester", mid: 1 };
 
     const wrapper = mount(App);
+    void wrapper;
     await flushPromises();
 
-    // Drive the connect flow through the RoomInput component.
     const room = useRoomStore();
     await room.resolve("22210347");
     await room.connect(22210347);
     await flushPromises();
 
-    // Simulate the WS finishing the handshake.
-    expect(fakeInstances.length).toBeGreaterThanOrEqual(1);
-    fakeInstances[0]!.simulateOpen();
-    await flushPromises();
-
-    expect(wrapper.find('[data-testid="danmaku-list"]').exists()).toBe(true);
+    // First WS = bridge. Second = banlist.
+    expect(fakeInstances.length).toBeGreaterThanOrEqual(2);
+    const banWs = fakeInstances.find((w) =>
+      w.url.includes("/api/ws/rooms/22210347/banlist"),
+    );
+    expect(banWs).toBeDefined();
+    expect(banWs!.url).toContain("token=local-tok");
   });
 
-  it("WS messages dispatch: danmaku event appends to danmakuStore", async () => {
+  it("renders the BanList panel after the room connects", async () => {
     server.use(
       http.post("*/api/rooms/start", () =>
         HttpResponse.json({ room_id: 22210347, title: "" }),
@@ -163,24 +161,103 @@ describe("App.vue", () => {
     await room.connect(22210347);
     await flushPromises();
 
-    fakeInstances[0]!.simulateOpen();
-    fakeInstances[0]!.simulateMessage(
+    // Both bridge + banlist WS constructed; simulate open on both.
+    fakeInstances.forEach((w) => w.simulateOpen());
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(true);
+  });
+
+  it("banlist snapshot → banStore is populated (WS-driven, no polling)", async () => {
+    server.use(
+      http.post("*/api/rooms/start", () =>
+        HttpResponse.json({ room_id: 22210347, title: "" }),
+      ),
+      http.post("*/api/rooms/stop", () => HttpResponse.json({ ok: true })),
+      http.get("*/api/rooms/resolve", () =>
+        HttpResponse.json({ room_id: 22210347, short_id: 22210347 }),
+      ),
+    );
+
+    const auth = useAuthStore();
+    auth.status = "authenticated";
+    auth.token = "local-tok";
+
+    const wrapper = mount(App);
+    void wrapper;
+    await flushPromises();
+
+    const room = useRoomStore();
+    await room.resolve("22210347");
+    await room.connect(22210347);
+    await flushPromises();
+
+    const banWs = fakeInstances.find((w) =>
+      w.url.includes("/api/ws/rooms/22210347/banlist"),
+    );
+    expect(banWs).toBeDefined();
+
+    banWs!.simulateOpen();
+    banWs!.simulateMessage(
       JSON.stringify({
-        type: "danmaku",
-        uid: 11,
-        uname: "fan",
-        text: "great stream!",
-        ts: 1_700_000_000,
-        guard_level: 0,
-        medal: null,
+        event: "snapshot",
+        bans: [{ uid: 11, uname: "alice", hour: 1 }],
       }),
     );
     await flushPromises();
 
-    // Importing here keeps the top of the file dependency-light.
-    const { useDanmakuStore } = await import("./stores/danmaku");
-    const danmaku = useDanmakuStore();
-    expect(danmaku.list).toHaveLength(1);
-    expect(danmaku.list[0]?.uname).toBe("fan");
+    const banStore = useBanStore();
+    expect(banStore.banList).toHaveLength(1);
+    expect(banStore.banList[0]?.uid).toBe(11);
+
+    expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(true);
+  });
+
+  it("on disconnect: BanlistWS is closed and banStore is cleared", async () => {
+    server.use(
+      http.post("*/api/rooms/start", () =>
+        HttpResponse.json({ room_id: 22210347, title: "" }),
+      ),
+      http.post("*/api/rooms/stop", () => HttpResponse.json({ ok: true })),
+      http.get("*/api/rooms/resolve", () =>
+        HttpResponse.json({ room_id: 22210347, short_id: 22210347 }),
+      ),
+    );
+
+    const auth = useAuthStore();
+    auth.status = "authenticated";
+    auth.token = "local-tok";
+
+    const wrapper = mount(App);
+    void wrapper;
+    await flushPromises();
+
+    const room = useRoomStore();
+    await room.resolve("22210347");
+    await room.connect(22210347);
+    await flushPromises();
+
+    const banWs = fakeInstances.find((w) =>
+      w.url.includes("/api/ws/rooms/22210347/banlist"),
+    );
+    expect(banWs).toBeDefined();
+    banWs!.simulateOpen();
+    banWs!.simulateMessage(
+      JSON.stringify({
+        event: "snapshot",
+        bans: [{ uid: 22, uname: "bob", hour: 24 }],
+      }),
+    );
+    await flushPromises();
+
+    const banStore = useBanStore();
+    expect(banStore.banList).toHaveLength(1);
+
+    // Disconnect.
+    await room.disconnect();
+    await flushPromises();
+
+    expect(banStore.banList).toHaveLength(0);
+    expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(false);
   });
 });

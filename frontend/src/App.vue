@@ -4,17 +4,21 @@ import { storeToRefs } from "pinia";
 import { useAuthStore } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
 import { useDanmakuStore } from "./stores/danmaku";
+import { useBanStore } from "./stores/ban";
 import { bootstrap } from "./api/client";
 import { BridgeWS, type BridgeEvent } from "./api/ws";
+import { BanlistWS } from "./api/banWs";
 import QrLogin from "./components/QrLogin.vue";
 import RoomInput from "./components/RoomInput.vue";
 import DanmakuList from "./components/DanmakuList.vue";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
+import BanList from "./components/BanList.vue";
 
 /**
- * T14 — top-level shell.
+ * T14 + T19 — top-level shell.
  *
- * Wires the auth flow (T10) to the room lifecycle (T14):
+ * Wires the auth flow (T10) to the room lifecycle (T14) and the
+ * ban-list WS bridge (T19):
  *
  * 1. On mount, bootstrap the local token + fetch auth status.
  * 2. While ``auth.status !== 'authenticated'``, render the QR login.
@@ -22,24 +26,34 @@ import ConnectionBanner from "./components/ConnectionBanner.vue";
  *    short id → presses "连接" → the store calls ``POST /rooms/start``
  *    and flips to ``status='connected'``.
  * 4. We watch ``roomStore.currentRoomId``: when it transitions from
- *    ``null`` to a number, we open a ``BridgeWS`` for that room and
- *    dispatch every received event into the danmaku/room stores. The
- *    inverse transition (number → null) closes the WS.
- * 5. The ConnectionBanner is shown whenever the WS is disconnected
- *    or actively retrying — driven by ``wsVisible`` ref, set by the
- *    BridgeWS callbacks.
+ *    ``null`` to a number, we open a ``BridgeWS`` AND a ``BanlistWS``
+ *    for that room. The inverse transition (number → null) closes
+ *    BOTH WSs and clears BOTH the danmaku and ban stores.
+ * 5. The ConnectionBanner is shown whenever the bridge WS is
+ *    disconnected or actively retrying — driven by ``wsVisible`` ref.
  *
- * NB: we deliberately do NOT touch the danmaku list or banner on
- * auth changes — they're scoped to the room lifecycle only.
+ * T19 (ban) notes:
+ *
+ * * The ban store is owned by the WS — we never poll. Every
+ *   snapshot / ban_added / ban_removed delta is dispatched into
+ *   ``useBanStore`` from inside ``BanlistWS``.
+ * * On disconnect, ``banStore.clear()`` is called alongside
+ *   ``danmaku.clear()`` so the panel never shows stale entries from
+ *   a previous room.
+ * * BanControls is intentionally NOT mounted at the App level —
+ *   it lives inline per danmaku row (the hover/popover wiring is
+ *   owned by App.vue but rendered by a per-row slot on DanmakuList).
  */
 const auth = useAuthStore();
 const room = useRoomStore();
 const danmaku = useDanmakuStore();
+const ban = useBanStore();
 
 const { currentRoomId } = storeToRefs(room);
 
 const wsVisible = ref<boolean>(false);
 let bridge: BridgeWS | null = null;
+let banWs: BanlistWS | null = null;
 
 onMounted(async () => {
   await bootstrap();
@@ -48,17 +62,23 @@ onMounted(async () => {
 
 watch(currentRoomId, (newId, oldId) => {
   if (oldId !== null && newId === null) {
-    // Disconnected — close WS, drop banner.
+    // Disconnected — close both WSs, drop banner, clear stores.
     bridge?.close();
     bridge = null;
+    banWs?.close();
+    banWs = null;
     wsVisible.value = false;
     danmaku.clear();
+    ban.clear();
     return;
   }
   if (oldId === null && newId !== null) {
-    // Just connected — open a WS for this room.
+    // Just connected — open both WSs for this room.
     if (bridge !== null) {
       bridge.close();
+    }
+    if (banWs !== null) {
+      banWs.close();
     }
     bridge = new BridgeWS(newId, auth.token, {
       onMessage: handleBridgeEvent,
@@ -70,6 +90,8 @@ watch(currentRoomId, (newId, oldId) => {
       },
     });
     bridge.connect();
+    banWs = new BanlistWS(newId, auth.token);
+    banWs.connect();
   }
 });
 
@@ -112,6 +134,7 @@ function handleBridgeEvent(event: BridgeEvent): void {
       <RoomInput />
       <ConnectionBanner :visible="wsVisible" />
       <DanmakuList v-if="room.status === 'connected'" />
+      <BanList v-if="room.status === 'connected'" />
     </section>
   </main>
 </template>
