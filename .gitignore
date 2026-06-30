@@ -27,3 +27,7 @@ tests/fixtures/*.json
 
 # Codegraph runtime cache (symlink to ~/.omo/codegraph/...)
 .codegraph
+
+# .omo runtime/backup artifacts (planning docs tracked, runtime state not)
+.omo/run-continuation/
+.omo/drafts/*.bak
