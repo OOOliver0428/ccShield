@@ -1,52 +1,46 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { onMounted } from "vue";
+import { useAuthStore } from "./stores/auth";
+import { bootstrap } from "./api/client";
+import QrLogin from "./components/QrLogin.vue";
 
-const backendStatus = ref<string>("checking…");
+const auth = useAuthStore();
 
 onMounted(async () => {
-  try {
-    const res = await fetch("/api/health");
-    if (!res.ok) {
-      backendStatus.value = `unhealthy (${res.status})`;
-      return;
-    }
-    const data: unknown = await res.json();
-    if (
-      typeof data === "object" &&
-      data !== null &&
-      "status" in data &&
-      (data as { status: unknown }).status === "ok"
-    ) {
-      backendStatus.value = "ok";
-    } else {
-      backendStatus.value = "unexpected response";
-    }
-  } catch (err) {
-    backendStatus.value = `unreachable: ${(err as Error).message}`;
-  }
+  await bootstrap();
+  await auth.fetchStatus();
 });
 </script>
 
 <template>
-  <main class="scaffold">
-    <h1>reccshield</h1>
-    <p>Bilibili live-room moderator tool — frontend scaffold.</p>
-    <p>
-      Backend health: <strong>{{ backendStatus }}</strong>
-    </p>
+  <main class="app-shell">
+    <QrLogin v-if="auth.status !== 'authenticated'" />
+    <section v-else class="authenticated-placeholder">
+      <h1>已登录</h1>
+      <p>
+        欢迎,
+        <strong>{{ auth.userInfo?.uname ?? "用户" }}</strong>
+        (mid: {{ auth.userInfo?.mid ?? "?" }})
+      </p>
+      <p class="hint">主界面将在 T14 接入。</p>
+    </section>
   </main>
 </template>
 
 <style scoped>
-.scaffold {
-  font-family:
-    system-ui,
-    -apple-system,
-    Segoe UI,
-    Roboto,
-    sans-serif;
-  max-width: 720px;
-  margin: 4rem auto;
-  padding: 0 1rem;
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.authenticated-placeholder {
+  text-align: center;
+}
+.hint {
+  color: #888;
+  font-size: 14px;
 }
 </style>

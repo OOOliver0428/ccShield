@@ -54,6 +54,7 @@ from app.bilibili.auth import (
     save_cookies_manual,
     write_env_atomic,
 )
+from app.config import settings
 
 # ---------------------------------------------------------------------------
 # Module-level paths and dependencies
@@ -140,6 +141,22 @@ class ManualCookiesResponse(BaseModel):
     mid: int
 
 
+class BootstrapResponse(BaseModel):
+    """Response body for ``GET /api/auth/bootstrap``.
+
+    Returns the current :attr:`Settings.LOCAL_TOKEN` so the frontend can
+    attach it as ``Authorization: Bearer …`` on every subsequent call.
+    The route is exempted from the LOCAL_TOKEN gate (see
+    :data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) but the Host guard
+    still applies — only a page served from ``localhost`` / ``127.0.0.1``
+    can lift the token, which is the single-user-local trust model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -150,6 +167,30 @@ router: APIRouter = APIRouter(prefix="/auth", tags=["auth"])
 # Type alias for the Depends() injection on every route that needs the
 # shared HTTP client. Keeps the per-route signatures consistent.
 HttpClientDep = Annotated[httpx.AsyncClient, Depends(get_http_client)]
+
+
+@router.get(
+    "/bootstrap",
+    response_model=BootstrapResponse,
+    summary="Hand the frontend the LOCAL_TOKEN (single-user-local bootstrap)",
+)
+async def auth_bootstrap() -> BootstrapResponse:
+    """Return the current ``LOCAL_TOKEN`` so the SPA can attach it to
+    every subsequent ``/api/*`` call.
+
+    The endpoint is **exempt from the LOCAL_TOKEN gate** (see
+    :data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) — otherwise the
+    frontend would have no way to learn the token on a freshly opened
+    page. The Host guard still runs: only a request whose Host is
+    ``localhost`` or ``127.0.0.1`` can lift the token, so an external
+    origin cannot ride the CORS allow-list to read it.
+
+    Trust model: LOCAL_TOKEN is a single-user-local secret whose job is
+    CSRF / DNS-rebinding defence, not secrecy from the developer's own
+    machine. Anything that can serve a page from ``localhost`` already
+    has full read/write access to the same machine's cookies.
+    """
+    return BootstrapResponse(token=settings.LOCAL_TOKEN)
 
 
 @router.post(
@@ -317,6 +358,7 @@ async def manual_cookies(
 
 __all__ = [
     "AuthStatusResponse",
+    "BootstrapResponse",
     "ManualCookiesRequest",
     "ManualCookiesResponse",
     "QrPollResponse",

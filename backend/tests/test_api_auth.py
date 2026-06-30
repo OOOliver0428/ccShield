@@ -456,8 +456,45 @@ def test_openapi_lists_all_auth_routes(client: TestClient) -> None:
         "/api/auth/qr/poll",
         "/api/auth/status",
         "/api/auth/manual",
+        "/api/auth/bootstrap",
     ):
         assert path in paths, f"missing path in OpenAPI: {path}"
+
+
+# ---------------------------------------------------------------------------
+# 9b. GET /api/auth/bootstrap — single-user-local token bootstrap
+# ---------------------------------------------------------------------------
+#
+# The frontend cannot call any other /api endpoint until it knows
+# LOCAL_TOKEN, but LOCAL_TOKEN is generated lazily inside the process.
+# We expose it on a dedicated, host-guarded-but-token-EXEMPT endpoint so a
+# browser tab on ``localhost`` can fetch the value on first load and attach
+# it to all subsequent calls.
+#
+# Host guard still applies (no ``Host: evil.com``), so an external origin
+# cannot ride the CORS allow-list + the exempt path to lift the token.
+# The token's job is CSRF / DNS-rebinding defence, not secrecy from
+# localhost — that is the single-user-local trust model.
+
+
+def test_bootstrap_returns_token_without_authorization(client: TestClient) -> None:
+    """GET /api/auth/bootstrap must answer 200 with {token: LOCAL_TOKEN}
+    even with NO Authorization header. This is the chicken-and-egg escape
+    hatch: the very first API call from a freshly opened SPA page.
+    """
+    from app.config import settings
+
+    response = client.get("/api/auth/bootstrap", headers={"Host": "localhost"})
+    assert response.status_code == 200
+    assert response.json() == {"token": settings.LOCAL_TOKEN}
+
+
+def test_bootstrap_rejects_non_local_host(client: TestClient) -> None:
+    """Host guard still applies to bootstrap — a malicious external origin
+    cannot lift the LOCAL_TOKEN even though the path is auth-exempt.
+    """
+    response = client.get("/api/auth/bootstrap", headers={"Host": "evil.com"})
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------

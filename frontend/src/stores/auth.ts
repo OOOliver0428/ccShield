@@ -1,0 +1,116 @@
+import { defineStore } from "pinia";
+import { ref } from "vue";
+import { httpClient } from "../api/client";
+
+export type AuthStatus =
+  | "loading"
+  | "needs_login"
+  | "authenticated"
+  | "expired";
+
+export type QrPollStatus =
+  | "scanning"
+  | "confirmed"
+  | "expired"
+  | "success"
+  | null;
+
+export interface UserInfo {
+  uname: string;
+  mid: number;
+}
+
+export const useAuthStore = defineStore("auth", () => {
+  const status = ref<AuthStatus>("loading");
+  const token = ref<string>("");
+  const userInfo = ref<UserInfo | null>(null);
+  const qrcodeUrl = ref<string>("");
+  const qrKey = ref<string>("");
+  const qrPollStatus = ref<QrPollStatus>(null);
+
+  let pollHandle: ReturnType<typeof setInterval> | null = null;
+
+  function setToken(value: string): void {
+    token.value = value;
+  }
+
+  function stopPolling(): void {
+    if (pollHandle !== null) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+  }
+
+  async function fetchStatus(): Promise<void> {
+    const response = await httpClient.get<{ state: string }>("/auth/status");
+    const next = response.data.state;
+    if (next === "authenticated") {
+      status.value = "authenticated";
+    } else if (next === "needs_login") {
+      status.value = "needs_login";
+    } else if (next === "expired") {
+      status.value = "expired";
+    } else {
+      status.value = "needs_login";
+    }
+  }
+
+  async function pollOnce(): Promise<void> {
+    const response = await httpClient.get<{ status: QrPollStatus }>(
+      "/auth/qr/poll",
+      { params: { qrcode_key: qrKey.value } },
+    );
+    const next = response.data.status;
+    qrPollStatus.value = next;
+    if (next === "expired") {
+      stopPolling();
+    } else if (next === "success") {
+      stopPolling();
+      await fetchStatus();
+    }
+  }
+
+  async function startQr(): Promise<void> {
+    stopPolling();
+    const response = await httpClient.post<{
+      qrcode_url: string;
+      qrcode_key: string;
+    }>("/auth/qr/start");
+    qrcodeUrl.value = response.data.qrcode_url;
+    qrKey.value = response.data.qrcode_key;
+    qrPollStatus.value = "scanning";
+    pollHandle = setInterval(() => {
+      void pollOnce();
+    }, 2000);
+    await pollOnce();
+  }
+
+  async function loginManual(
+    sessdata: string,
+    bili_jct: string,
+    buvid3: string | null,
+  ): Promise<void> {
+    const response = await httpClient.post<{ uname: string; mid: number }>(
+      "/auth/manual",
+      { sessdata, bili_jct, buvid3 },
+    );
+    userInfo.value = {
+      uname: response.data.uname,
+      mid: response.data.mid,
+    };
+    await fetchStatus();
+  }
+
+  return {
+    status,
+    token,
+    userInfo,
+    qrcodeUrl,
+    qrKey,
+    qrPollStatus,
+    setToken,
+    fetchStatus,
+    startQr,
+    loginManual,
+  };
+});

@@ -52,13 +52,24 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 
-# Paths that bypass the middleware entirely. Prefix-match so /docs and
-# /docs/oauth2-redirect are both exempt.
-_EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
+# Paths that bypass BOTH the host guard and the token gate. Prefix-match
+# so /docs and /docs/oauth2-redirect are both exempt.
+_FULLY_EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
     "/health",
     "/openapi",
     "/docs",
     "/redoc",
+)
+
+# Paths that bypass only the LOCAL_TOKEN gate (chicken-and-egg endpoints
+# the SPA must call before it knows the token). The Host guard further
+# down STILL runs on them, so only a request from ``localhost`` /
+# ``127.0.0.1`` can succeed. ``/api/auth/bootstrap`` is the only member
+# today; new entries MUST come with a written rationale.
+#
+# See ``auth_routes.auth_bootstrap`` for the full trust-model rationale.
+_TOKEN_EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
+    "/api/auth/bootstrap",
 )
 # Path prefixes that REQUIRE auth + host guard.
 _PROTECTED_PATH_PREFIXES: tuple[str, ...] = (
@@ -74,16 +85,29 @@ _ALLOWED_HOSTS: tuple[str, ...] = ("localhost", "127.0.0.1")
 DispatchCallable = Callable[[Request], Awaitable[Response]]
 
 
-def _is_exempt(path: str) -> bool:
-    """Return True when ``path`` is exempt from the guard.
+def _is_fully_exempt(path: str) -> bool:
+    """Return True when ``path`` is exempt from BOTH host guard and token gate.
 
     Both exact matches and prefix matches are accepted so a future
-    ``/health/deep`` would also be exempt. The constant tuple above
-    documents the intent for code-reviewers.
+    ``/health/deep`` would also be exempt.
     """
     return any(
         path == prefix or path.startswith(prefix + "/")
-        for prefix in _EXEMPT_PATH_PREFIXES
+        for prefix in _FULLY_EXEMPT_PATH_PREFIXES
+    )
+
+
+def _is_token_exempt(path: str) -> bool:
+    """Return True when ``path`` is exempt only from the LOCAL_TOKEN gate.
+
+    The host guard still runs on these paths — that is the whole point of
+    having a separate list: chicken-and-egg endpoints the SPA must call
+    before it knows the token, but which must remain unreachable from
+    external origins.
+    """
+    return any(
+        path == prefix or path.startswith(prefix + "/")
+        for prefix in _TOKEN_EXEMPT_PATH_PREFIXES
     )
 
 
@@ -182,17 +206,21 @@ class LocalTokenMiddleware(BaseHTTPMiddleware):
 
         Order matters:
 
-        1. Exempt paths short-circuit (no work, no logging).
+        1. Fully-exempt paths short-circuit (no work, no logging) — covers
+           ``/health``, ``/openapi``, ``/docs``, ``/redoc``.
         2. Unprotected paths skip the guard (e.g. future non-/api routes
            we haven't classified yet — fail-open here is intentional so
            a misconfigured prefix doesn't lock out the developer).
         3. Host guard runs FIRST on protected paths; the 403 response
            reveals nothing about token validity.
-        4. Token check runs LAST; 401 if missing or wrong.
+        4. Token check runs LAST, **except** for paths in
+           :data:`_TOKEN_EXEMPT_PATH_PREFIXES` (currently just
+           ``/api/auth/bootstrap``) which the SPA must hit before it
+           knows the token.
         """
         path: str = request.url.path
 
-        if _is_exempt(path):
+        if _is_fully_exempt(path):
             return await call_next(request)
 
         if not _is_protected(path):
@@ -213,6 +241,9 @@ class LocalTokenMiddleware(BaseHTTPMiddleware):
                 {"detail": "forbidden: host not in allow-list"},
                 status_code=403,
             )
+
+        if _is_token_exempt(path):
+            return await call_next(request)
 
         if not _request_carries_valid_token(request):
             return JSONResponse(
