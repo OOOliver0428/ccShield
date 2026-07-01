@@ -13,6 +13,9 @@ ifeq ($(shell command -v bun 2>/dev/null),)
   endif
 endif
 
+# Resolved via the PATH setup above; overridable for exotic setups.
+BUN ?= bun
+
 help:
 	@echo "reccshield monorepo"
 	@echo ""
@@ -28,14 +31,13 @@ install:
 	cd frontend && bun install
 
 dev:
-	@command -v concurrently >/dev/null 2>&1 || { \
-		echo "ERROR: concurrently not installed."; \
-		echo "Run: cd frontend && bun install (concurrently is a frontend devDep)."; \
-		exit 1; \
-	}
-	cd frontend && concurrently --names "backend,frontend" --prefix-colors "cyan,magenta" \
+	@if [ ! -x frontend/node_modules/.bin/concurrently ]; then \
+		echo "concurrently not found, installing frontend deps..."; \
+		(cd frontend && $(BUN) install) || { echo "bun install failed; install bun first (https://bun.sh)"; exit 1; }; \
+	fi
+	cd frontend && PATH="./node_modules/.bin:$$PATH" concurrently --names "backend,frontend" --prefix-colors "cyan,magenta" \
 		"cd $(CURDIR)/backend && uv run uvicorn app.main:app --reload --port 8000" \
-		"bun run dev"
+		"$(BUN) run dev"
 
 test:
 	cd backend && uv run pytest
