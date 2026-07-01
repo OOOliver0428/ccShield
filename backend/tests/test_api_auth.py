@@ -386,7 +386,6 @@ def test_manual_returns_uname_mid_on_valid_cookies(
     from app.config import settings
 
     async def fake_save_cookies_manual(
-        client: Any,
         sessdata: str,
         bili_jct: str,
         buvid3: str | None,
@@ -421,7 +420,6 @@ def test_manual_returns_400_on_login_incomplete(
     from app.config import settings
 
     async def fake_save_cookies_manual(
-        client: Any,
         sessdata: str,
         bili_jct: str,
         buvid3: str | None,
@@ -457,6 +455,7 @@ def test_openapi_lists_all_auth_routes(client: TestClient) -> None:
         "/api/auth/status",
         "/api/auth/manual",
         "/api/auth/bootstrap",
+        "/api/auth/me",
     ):
         assert path in paths, f"missing path in OpenAPI: {path}"
 
@@ -514,6 +513,100 @@ def test_qr_poll_route_path_is_correct() -> None:
     assert "/auth/qr/start" in paths
     assert "/auth/status" in paths
     assert "/auth/manual" in paths
+    assert "/auth/me" in paths
+
+
+# ---------------------------------------------------------------------------
+# /api/auth/me — current user identity (post-login display)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_me_returns_uname_and_mid_when_authenticated(
+    client: TestClient, mock_auth_session: MagicMock
+) -> None:
+    """AUTHENTICATED + /nav returns data → 200 with uname/mid."""
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    mock_auth_session.state = AuthState.AUTHENTICATED
+    mock_auth_session.get_current_user = AsyncMock(
+        return_value={"uname": "tester", "mid": 12345, "isLogin": True}
+    )
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"uname": "tester", "mid": 12345}
+
+
+def test_auth_me_returns_401_when_not_authenticated(
+    client: TestClient, mock_auth_session: MagicMock
+) -> None:
+    """NEEDS_LOGIN / EXPIRED → 401."""
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    mock_auth_session.state = AuthState.NEEDS_LOGIN
+    mock_auth_session.get_current_user = AsyncMock(return_value=None)
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 401
+
+
+def test_auth_me_returns_401_when_nav_returns_no_data(
+    client: TestClient, mock_auth_session: MagicMock
+) -> None:
+    """AUTHENTICATED in state machine but /nav returns None → 401."""
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    mock_auth_session.state = AuthState.AUTHENTICATED
+    mock_auth_session.get_current_user = AsyncMock(return_value=None)
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 401
+
+
+def test_auth_me_returns_401_when_nav_payload_malformed(
+    client: TestClient, mock_auth_session: MagicMock
+) -> None:
+    """AUTHENTICATED + /nav returns data without uname/mid → 401."""
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    mock_auth_session.state = AuthState.AUTHENTICATED
+    mock_auth_session.get_current_user = AsyncMock(
+        return_value={"isLogin": True}
+    )
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 401
+
+
+def test_auth_me_requires_bearer_token(
+    client: TestClient, mock_auth_session: MagicMock
+) -> None:
+    """401 when no Authorization header — middleware gate still applies."""
+    from app.auth.session import AuthState
+
+    mock_auth_session.state = AuthState.AUTHENTICATED
+    mock_auth_session.get_current_user = AsyncMock(
+        return_value={"uname": "tester", "mid": 1}
+    )
+
+    response = client.get("/api/auth/me", headers={"Host": "localhost"})
+    assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -630,7 +723,6 @@ def test_manual_success_flips_auth_status_to_authenticated_in_same_process(
     monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
 
     async def fake_save_cookies_manual(
-        client: Any,
         sessdata: str,
         bili_jct: str,
         buvid3: str | None,
@@ -713,7 +805,6 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
     settings.BUVID3 = "preexisting_buvid3"
 
     async def fake_save_cookies_manual(
-        client: Any,
         sessdata: str,
         bili_jct: str,
         buvid3: str | None,

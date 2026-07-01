@@ -108,7 +108,7 @@ def _reset_fake() -> None:
 
 
 def test_normalize_danmu_msg_basic() -> None:
-    """info[3] = [name, level] → Medal(name=name, level=level)."""
+    """info[3] = [level, name, ...] (B站 live API order) → Medal(name=name, level=level)."""
     sess = RoomSession(bili_client=_stub_bili())
     raw = {
         "cmd": "DANMU_MSG",
@@ -116,7 +116,7 @@ def test_normalize_danmu_msg_basic() -> None:
             [0, 0, 0, 0, 1700000000, 0],  # info[0] — ts at index 4
             "hello",                       # info[1] — text
             [123, "alice", 0, 0, 0],       # info[2] — uid=123, uname="alice"
-            ["medal", 5],                  # info[3] — [name, level]
+            [5, "粉丝团", "anchor1"],         # info[3] — [level, name, anchor]
         ],
     }
     event = sess._normalize(raw)
@@ -128,7 +128,7 @@ def test_normalize_danmu_msg_basic() -> None:
     assert event.ts == 1700000000
     assert event.guard_level == 0  # info has <8 elements → default 0
     assert isinstance(event.medal, Medal)
-    assert event.medal.name == "medal"
+    assert event.medal.name == "粉丝团"
     assert event.medal.level == 5
 
 

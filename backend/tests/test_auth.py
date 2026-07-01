@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -72,7 +73,7 @@ def make_async_client(handler) -> httpx.AsyncClient:
 
 
 def test_qr_generate_returns_url_and_key_on_code_0() -> None:
-    """Happy path: B站 code 0 → return both qrcode_url and qrcode_key."""
+    """Happy path: B站 code 0 + data.url (current field name) → return both."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/x/passport-login/web/qrcode/generate"
@@ -81,9 +82,8 @@ def test_qr_generate_returns_url_and_key_on_code_0() -> None:
             json={
                 "code": 0,
                 "data": {
-                    "qrcode_url": "https://i0.hdslb.com/bfs/.../qr.png",
-                    "qrcode_key": "fake_qr_key_123",
                     "url": "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?...",
+                    "qrcode_key": "fake_qr_key_123",
                 },
             },
         )
@@ -92,6 +92,27 @@ def test_qr_generate_returns_url_and_key_on_code_0() -> None:
     result = run(qr_generate(client))
     assert result["qrcode_url"].startswith("https://")
     assert result["qrcode_key"] == "fake_qr_key_123"
+
+
+def test_qr_generate_falls_back_to_legacy_qrcode_url_field() -> None:
+    """Interop: older B站 deployments still emit ``data.qrcode_url``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "qrcode_url": "https://legacy.example/qr.png",
+                    "qrcode_key": "legacy_key_999",
+                },
+            },
+        )
+
+    client = make_async_client(handler)
+    result = run(qr_generate(client))
+    assert result["qrcode_url"] == "https://legacy.example/qr.png"
+    assert result["qrcode_key"] == "legacy_key_999"
 
 
 def test_qr_generate_raises_qr_login_error_on_non_zero_code() -> None:
@@ -443,29 +464,28 @@ def test_write_env_atomic_omits_buvid3_line_when_none(tmp_path: Path) -> None:
 
 def test_save_cookies_manual_writes_env_and_returns_uname_mid_on_valid_nav(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plan B happy path: provided cookies pass nav → .env is written."""
+    """Plan B happy path: provided cookies pass nav → .env is written.
+
+    The cookies are baked into the BilibiliClient's own httpx client at
+    construction time — patching BilibiliClient proves this contract
+    (no shared client is passed in).
+    """
     env_path = tmp_path / ".env"
     env_path.write_text("ROOM_ID=22210347\n", encoding="utf-8")
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/x/web-interface/nav"
-        return httpx.Response(
-            200,
-            json={
-                "code": 0,
-                "data": {
-                    "uname": "tester",
-                    "mid": 12345,
-                    "isLogin": True,
-                },
-            },
-        )
+    fake_bili = MagicMock()
+    fake_bili.get_user_info = AsyncMock(
+        return_value={"uname": "tester", "mid": 12345, "isLogin": True}
+    )
+    fake_bili.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.bilibili.client.BilibiliClient", lambda **kwargs: fake_bili
+    )
 
-    client = make_async_client(handler)
     result = run(
         save_cookies_manual(
-            client=client,
             sessdata="manual_sess",
             bili_jct="manual_jct",
             buvid3="manual_buvid",
@@ -475,6 +495,9 @@ def test_save_cookies_manual_writes_env_and_returns_uname_mid_on_valid_nav(
 
     assert result["uname"] == "tester"
     assert result["mid"] == 12345
+    # BilibiliClient was constructed with the provided cookies + csrf.
+    assert fake_bili.get_user_info.await_count == 1
+    fake_bili.close.assert_awaited_once()
 
     # The .env must have been written with the provided values.
     text = env_path.read_text(encoding="utf-8")
@@ -486,6 +509,7 @@ def test_save_cookies_manual_writes_env_and_returns_uname_mid_on_valid_nav(
 
 def test_save_cookies_manual_raises_login_incomplete_on_invalid_nav(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Plan B failure path: nav says cookies are not valid → raise
     LoginIncompleteError AND do NOT touch the .env file."""
@@ -493,17 +517,16 @@ def test_save_cookies_manual_raises_login_incomplete_on_invalid_nav(
     env_path.write_text("SESSDATA=original_sess\nOTHER=val\n", encoding="utf-8")
     original_text = env_path.read_text(encoding="utf-8")
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        # nav returns a non-zero code → cookies invalid.
-        return httpx.Response(
-            200, json={"code": -101, "message": "not logged in"}
-        )
+    fake_bili = MagicMock()
+    fake_bili.get_user_info = AsyncMock(return_value=None)
+    fake_bili.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.bilibili.client.BilibiliClient", lambda **kwargs: fake_bili
+    )
 
-    client = make_async_client(handler)
     with pytest.raises(LoginIncompleteError):
         run(
             save_cookies_manual(
-                client=client,
                 sessdata="bad_sess",
                 bili_jct="bad_jct",
                 buvid3=None,
@@ -517,20 +540,23 @@ def test_save_cookies_manual_raises_login_incomplete_on_invalid_nav(
 
 def test_save_cookies_manual_raises_login_incomplete_when_nav_data_missing(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Adversarial: nav returns code 0 but data is None → treat as invalid."""
 
     env_path = tmp_path / ".env"
     env_path.write_text("SESSDATA=keepme\n", encoding="utf-8")
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 0, "data": None})
+    fake_bili = MagicMock()
+    fake_bili.get_user_info = AsyncMock(return_value=None)
+    fake_bili.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.bilibili.client.BilibiliClient", lambda **kwargs: fake_bili
+    )
 
-    client = make_async_client(handler)
     with pytest.raises(LoginIncompleteError):
         run(
             save_cookies_manual(
-                client=client,
                 sessdata="x",
                 bili_jct="y",
                 buvid3=None,

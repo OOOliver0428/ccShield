@@ -157,6 +157,20 @@ class BootstrapResponse(BaseModel):
     token: str
 
 
+class MeResponse(BaseModel):
+    """Response body for ``GET /api/auth/me``.
+
+    Carries the minimal user identity the SPA needs to display after a
+    successful login (QR or manual). ``uname`` and ``mid`` come from the
+    ``/x/web-interface/nav`` payload.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    uname: str
+    mid: int
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -296,6 +310,49 @@ async def auth_status() -> AuthStatusResponse:
     return AuthStatusResponse(state=auth_session_module.auth_session.state.value)
 
 
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="Return the currently authenticated user's identity",
+)
+async def auth_me() -> MeResponse:
+    """Surface ``uname`` / ``mid`` to the SPA after QR or manual login.
+
+    Gating:
+
+    - **401** when the auth session is not AUTHENTICATED (cold start,
+      expired cookies, or login still in flight).
+    - **401** when the ``/nav`` call returns no data (cookies were marked
+      valid but the API rejected them — e.g. token rotated server-side).
+
+    On the happy path we return ``{uname, mid}`` so the frontend can
+    render the logged-in badge without a separate round-trip.
+    """
+    session = auth_session_module.auth_session
+    if session.state != auth_session_module.AuthState.AUTHENTICATED:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"not authenticated (current state: {session.state.value})",
+        )
+
+    data: dict[str, object] | None = await session.get_current_user()
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="not authenticated: /nav returned no data",
+        )
+
+    uname_obj = data.get("uname")
+    mid_obj = data.get("mid")
+    if not isinstance(uname_obj, str) or not isinstance(mid_obj, int):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="not authenticated: /nav payload missing uname / mid",
+        )
+
+    return MeResponse(uname=uname_obj, mid=mid_obj)
+
+
 @router.post(
     "/manual",
     response_model=ManualCookiesResponse,
@@ -303,7 +360,6 @@ async def auth_status() -> AuthStatusResponse:
 )
 async def manual_cookies(
     body: ManualCookiesRequest,
-    client: HttpClientDep,
 ) -> ManualCookiesResponse:
     """Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.
 
@@ -315,7 +371,6 @@ async def manual_cookies(
     """
     try:
         result = await save_cookies_manual(
-            client=client,
             sessdata=body.sessdata,
             bili_jct=body.bili_jct,
             buvid3=body.buvid3,

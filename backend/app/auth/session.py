@@ -304,6 +304,22 @@ class AuthSession:
                 f"authentication required (current state: {self._state.value})"
             )
 
+    async def get_current_user(self) -> dict[str, object] | None:
+        """Fetch the live user record from ``/nav`` via the shared Bili client.
+
+        Returns:
+            The ``data`` payload on code 0, else ``None``. Callers should
+            treat ``None`` as "no user — return 401" rather than 500.
+
+        Used by the ``/api/auth/me`` endpoint to surface ``uname`` / ``mid``
+        to the frontend after QR / manual login.
+        """
+        get_user_info = getattr(self._bili_client, "get_user_info", None)
+        if get_user_info is None:
+            return None
+        result: object = await get_user_info()
+        return result if isinstance(result, dict) else None
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton

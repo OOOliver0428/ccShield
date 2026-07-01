@@ -224,7 +224,12 @@ class RoomSession:
     def _normalize_danmu(
         self, raw: dict[str, object]
     ) -> DanmakuEvent | None:
-        """Extract a :class:`DanmakuEvent` from a DANMU_MSG payload."""
+        """Extract a :class:`DanmakuEvent` from a DANMU_MSG payload.
+
+        ``info[3]`` (medal) is ``[level, name, anchor_uname, ...]`` — level
+        first, name second (per the live B站 API; older docs had them
+        reversed).
+        """
         info_obj = raw.get("info")
         if not isinstance(info_obj, list) or len(info_obj) < 3:
             return None
@@ -259,15 +264,15 @@ class RoomSession:
             if isinstance(gl_obj, int):
                 guard_level = gl_obj
 
-        # medal — info[3] if present and non-empty
+        # medal — info[3] = [level, name, anchor_uname, ...] (B站 live API order).
         medal: Medal | None = None
         if len(info) > 3 and info[3]:
             medal_raw = info[3]
             if isinstance(medal_raw, list) and len(medal_raw) >= 2:
-                name_obj = medal_raw[0]
-                level_obj = medal_raw[1]
-                medal_name = name_obj if isinstance(name_obj, str) else ""
+                level_obj = medal_raw[0]
+                name_obj = medal_raw[1]
                 medal_level = level_obj if isinstance(level_obj, int) else 0
+                medal_name = name_obj if isinstance(name_obj, str) else ""
                 medal = Medal(name=medal_name, level=medal_level)
 
         return DanmakuEvent(

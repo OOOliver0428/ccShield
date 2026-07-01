@@ -246,12 +246,18 @@ async def qr_generate(client: httpx.AsyncClient) -> dict[str, str]:
     if not isinstance(data, dict):
         raise QrLoginError("qr_generate: missing or non-object 'data'")
 
-    qrcode_url = data.get("qrcode_url")
-    qrcode_key = data.get("qrcode_key")
-    if not isinstance(qrcode_url, str) or not isinstance(qrcode_key, str):
-        raise QrLoginError("qr_generate: data missing qrcode_url / qrcode_key")
-    if not qrcode_url or not qrcode_key:
-        raise QrLoginError("qr_generate: data has empty qrcode_url / qrcode_key")
+    # B站 renamed ``qrcode_url`` → ``url``; prefer the new name, keep the
+    # legacy field as a fallback. Response key stays ``qrcode_url``.
+    url_obj = data.get("url")
+    legacy_url_obj = data.get("qrcode_url")
+    raw_scan_link: object = url_obj if isinstance(url_obj, str) else legacy_url_obj
+    qrcode_key_obj = data.get("qrcode_key")
+    if not isinstance(raw_scan_link, str) or not isinstance(qrcode_key_obj, str):
+        raise QrLoginError("qr_generate: data missing url / qrcode_key")
+    if not raw_scan_link or not qrcode_key_obj:
+        raise QrLoginError("qr_generate: data has empty url / qrcode_key")
+    qrcode_url: str = raw_scan_link
+    qrcode_key: str = qrcode_key_obj
 
     return {"qrcode_url": qrcode_url, "qrcode_key": qrcode_key}
 
@@ -433,7 +439,6 @@ def write_env_atomic(
 
 
 async def save_cookies_manual(
-    client: httpx.AsyncClient,
     sessdata: str,
     bili_jct: str,
     buvid3: str | None,
@@ -441,15 +446,22 @@ async def save_cookies_manual(
 ) -> dict[str, object]:
     """Validate user-provided cookies via ``/nav`` and persist on success.
 
-    The validation step uses a one-shot ``BilibiliClient`` configured with
-    the provided cookies. ``get_user_info()`` returns ``None`` when ``nav``
+    The validation step uses a one-shot :class:`BilibiliClient` that
+    OWNS its own ``httpx.AsyncClient`` (we deliberately do NOT inject
+    the shared request-scoped client). Constructing without an injected
+    client bakes the cookies into the httpx client's cookie jar so the
+    ``/nav`` call actually carries them — an injected client would not
+    get its jar updated by the constructor, which silently produced
+    ``nav -101`` on every manual login attempt.
+
+    :meth:`BilibiliClient.get_user_info` returns ``None`` when ``nav``
     reports a non-zero business code (including ``-101`` not-logged-in),
-    which we treat as "invalid cookies". On ``code == 0`` and a non-empty
-    ``data`` dict we extract ``uname`` / ``mid`` and atomically persist.
+    which we treat as "invalid cookies". On a non-empty data dict we
+    extract ``uname`` / ``mid`` and atomically persist.
 
     Failure semantics: on any validation failure we raise
-    ``LoginIncompleteError`` and do NOT touch ``env_path``. The caller's
-    existing ``.env`` (if any) is preserved verbatim.
+    :class:`LoginIncompleteError` and do NOT touch ``env_path``. The
+    caller's existing ``.env`` (if any) is preserved verbatim.
     """
     # Local import to avoid a circular dependency (BilibiliClient imports
     # from app.bilibili.exceptions; auth.py sits alongside it but lives
@@ -463,20 +475,16 @@ async def save_cookies_manual(
     if buvid3 is not None:
         cookies["buvid3"] = buvid3
 
-    # Wire the cookies onto a BilibiliClient that uses the injected
-    # ``client`` (which may carry a MockTransport in tests, or a real
-    # httpx transport in production). The cookies get baked into the
-    # client at construction time so the nav request carries them.
+    # No ``client=`` injection — BilibiliClient builds its own httpx
+    # client with the cookies in the jar at construction time.
     bili_client = BilibiliClient(
-        client=client,
         cookies=cookies,
         csrf_token=bili_jct,
     )
-    # NOTE: we do NOT call ``bili_client.close()`` here — the injected
-    # ``client`` is owned by the caller. Closing it would break any
-    # further use the caller has planned (e.g. the FastAPI request
-    # lifecycle). Tests build a fresh client per test so this is safe.
-    data = await bili_client.get_user_info()
+    try:
+        data = await bili_client.get_user_info()
+    finally:
+        await bili_client.close()
 
     if not isinstance(data, dict):
         raise LoginIncompleteError(
@@ -490,9 +498,7 @@ async def save_cookies_manual(
             "save_cookies_manual: /nav response missing uname / mid"
         )
 
-    # Validation succeeded → persist atomically. Note: we deliberately
-    # do NOT write through ``client`` — the atomic write uses the
-    # filesystem directly.
+    # Validation succeeded → persist atomically.
     write_env_atomic(
         sessdata=sessdata,
         bili_jct=bili_jct,

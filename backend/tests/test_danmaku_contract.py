@@ -95,14 +95,14 @@ def _pack_auth_rsp(body: dict[str, object]) -> bytes:
 #   info[0]    — sender meta + ts at [4]
 #   info[1]    — text
 #   info[2]    — [uid, uname, is_admin, is_vip, ...]
-#   info[3]    — [medal_name, medal_level] or falsy
+#   info[3]    — [medal_level, medal_name, anchor_uname, ...] (B站 order)
 #   info[4..6] — B站-specific extras (room flags etc.)
 #   info[7]    — guard_level (0=none, 1=舰长, 2=提督, 3=总督)
 _DANMU_INFO_FULL: list[object] = [
     [0, 0, 0, 0, 1700000000, 0],  # info[0][4] = 1700000000 (ts)
     "hello world",                  # info[1] = text
     [123, "alice", 0, 0, 0],        # info[2][0] = uid, info[2][1] = uname
-    ["medalname", 5],               # info[3] = [name, level]
+    [5, "粉丝团", "anchor1"],          # info[3] = [level, name, anchor]
     [],                             # info[4] — empty list (B站 default)
     0,                              # info[5]
     0,                              # info[6]
@@ -135,12 +135,12 @@ AUTH_RSP_PAYLOAD: dict[str, object] = {"code": 0}
 
 def test_contract_normal_json_danmu_msg() -> None:
     """A NORMAL/JSON frame whose payload is a DANMU_MSG normalizes to a
-    :class:`DanmakuEvent` with all fields mapped from the ccShield layout.
+    :class:`DanmakuEvent` with all fields mapped from the live B站 layout.
 
     This is the canonical DANMU_MSG shape B站 actually sends — guard_level
-    sits at info[7], medal at info[3]=[name,level], ts at info[0][4].
-    If B站 changes any of these field positions, this test fails,
-    prompting a re-capture / contract revision.
+    sits at info[7], medal at info[3]=[level, name, ...] (level first),
+    ts at info[0][4]. If B站 changes any of these field positions, this
+    test fails, prompting a re-capture / contract revision.
     """
     frame = _pack_normal_json(DANMU_MSG_PAYLOAD)
 
@@ -162,7 +162,7 @@ def test_contract_normal_json_danmu_msg() -> None:
     assert event.ts == 1700000000
     assert event.guard_level == 3  # 总督
     assert isinstance(event.medal, Medal)
-    assert event.medal.name == "medalname"
+    assert event.medal.name == "粉丝团"
     assert event.medal.level == 5
 
 
@@ -346,7 +346,7 @@ async def test_contract_full_pipeline_normal_json_to_callback() -> None:
     assert event.uid == 123
     assert event.guard_level == 3
     assert isinstance(event.medal, Medal)
-    assert event.medal.name == "medalname"
+    assert event.medal.name == "粉丝团"
     assert event.medal.level == 5
 
 
@@ -372,7 +372,7 @@ async def test_contract_dedup_same_dm_v2_across_synthetic_frames() -> None:
             [0, 0, 0, 0, 1700000000, 0],
             "hello world",
             [123, "alice", 0, 0, 0],
-            ["medalname", 5],
+            [5, "粉丝团", "anchor1"],
             [],
             0,
             0,
