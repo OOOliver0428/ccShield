@@ -24,9 +24,12 @@ keep-alive are reused across requests. The lifespan in
 
 Test seams:
 
-- :data:`_ENV_PATH` — module-level ``Path`` pointing at the project
-  root's ``.env``. Tests monkeypatch this to a ``tmp_path`` to assert
-  what gets written without touching the real on-disk file.
+- :data:`_ENV_PATH` — module-level alias of :data:`app.config._ENV_FILE`
+  (single source of truth for the .env path). Tests monkeypatch this to
+  a ``tmp_path`` to assert what gets written without touching the real
+  on-disk file. The invariant ``auth_routes._ENV_PATH is
+  app.config._ENV_FILE`` is pinned by
+  ``test_env_path_matches_config_env_file_single_source_of_truth``.
 - The auth functions and ``auth_session`` are imported by name; tests
   use :func:`monkeypatch.setattr` on this module to swap them out.
 
@@ -49,21 +52,28 @@ from app.bilibili.auth import (
     QrAwaitingConfirmError,
     QrAwaitingScanError,
     QrExpiredError,
+    fetch_buvid3,
     qr_generate,
     qr_poll,
     save_cookies_manual,
     write_env_atomic,
 )
-from app.config import settings
+from app.config import _ENV_FILE, settings
 
 # ---------------------------------------------------------------------------
 # Module-level paths and dependencies
 # ---------------------------------------------------------------------------
 
-# Project root is the parent of ``backend/``, i.e. ``<repo>/``. This file
-# lives at ``<repo>/backend/app/api/auth_routes.py`` → four levels up.
-_PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
-_ENV_PATH: Path = _PROJECT_ROOT / ".env"
+# Bug 1 / F3 fix: re-export ``_ENV_FILE`` from ``app.config`` as the
+# single source of truth for the .env path. Previous code computed
+# ``_PROJECT_ROOT`` from one extra hop (3 parents from auth_routes.py =
+# ``backend/``), so write_env_atomic wrote to ``backend/.env`` while
+# config.py read ``<repo>/.env`` → on restart the cookies were gone and
+# the user had to re-scan. Importing ``_ENV_FILE`` here pins the
+# invariant: a future refactor that re-introduces a divergent
+# computation breaks ``test_env_path_matches_config_env_file_...`` in
+# test_api_auth.py.
+_ENV_PATH: Path = _ENV_FILE  # alias for tests + introspection
 
 
 def get_http_client(request: Request) -> httpx.AsyncClient:
@@ -260,10 +270,18 @@ async def qr_poll_route(
     # success path: persist cookies and refresh the in-memory auth state.
     sessdata: str = payload["sessdata"]
     bili_jct: str = payload["bili_jct"]
+    # Bug 2 / F3 fix: B站's QR-login flow does NOT Set-Cookie buvid3
+    # (device fingerprint). We capture one from /x/frontend/finger/spi
+    # so the freshly-persisted .env carries a buvid3 for WBI-signed
+    # endpoints (e.g. /xlive/getDanmuInfo). fetch_buvid3 is best-effort
+    # and never raises — a network blip here just means buvid3 stays
+    # ``None`` and ``write_env_atomic`` leaves the existing BUVID3 line
+    # alone.
+    buvid3: str | None = await fetch_buvid3(client)
     write_env_atomic(
         sessdata=sessdata,
         bili_jct=bili_jct,
-        buvid3=None,
+        buvid3=buvid3,
         env_path=_ENV_PATH,
     )
     # Hot-reload the auth session: write the new cookies into the live
@@ -277,7 +295,7 @@ async def qr_poll_route(
         await auth_session_module.auth_session.mark_authenticated_after_login(
             sessdata=sessdata,
             bili_jct=bili_jct,
-            buvid3=None,
+            buvid3=buvid3,
         )
     except Exception:
         # State-refresh failure MUST NOT mask the successful login — the
@@ -360,6 +378,7 @@ async def auth_me() -> MeResponse:
 )
 async def manual_cookies(
     body: ManualCookiesRequest,
+    client: HttpClientDep,
 ) -> ManualCookiesResponse:
     """Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.
 
@@ -368,12 +387,22 @@ async def manual_cookies(
     HTTP 400. The caller's existing ``.env`` is left untouched — the
     :func:`save_cookies_manual` helper does the same guarantee at the
     persistence layer.
+
+    Bug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,
+    fetch one from ``/x/frontend/finger/spi`` and thread it through to
+    both ``save_cookies_manual`` and ``mark_authenticated_after_login``.
+    If the user did provide a buvid3 we trust it verbatim (it's the
+    cookie they extracted from a real browser session, which is what
+    B站 actually expects). fetch_buvid3 is best-effort and never raises.
     """
+    effective_buvid3: str | None = body.buvid3
+    if effective_buvid3 is None:
+        effective_buvid3 = await fetch_buvid3(client)
     try:
         result = await save_cookies_manual(
             sessdata=body.sessdata,
             bili_jct=body.bili_jct,
-            buvid3=body.buvid3,
+            buvid3=effective_buvid3,
             env_path=_ENV_PATH,
         )
     except LoginIncompleteError as exc:
@@ -395,7 +424,7 @@ async def manual_cookies(
         await auth_session_module.auth_session.mark_authenticated_after_login(
             sessdata=body.sessdata,
             bili_jct=body.bili_jct,
-            buvid3=body.buvid3,
+            buvid3=effective_buvid3,
         )
     except Exception:
         # Same rationale as the QR-poll path: a state-refresh blip

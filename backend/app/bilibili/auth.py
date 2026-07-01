@@ -67,6 +67,12 @@ _QR_GENERATE_URL: str = (
 _QR_POLL_URL: str = (
     "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
 )
+# /x/frontend/finger/spi returns a device fingerprint (b_3 == buvid3).
+# B站's QR-login flow does NOT Set-Cookie buvid3 itself; we call this
+# endpoint right after a successful QR poll to capture the fingerprint
+# the browser would normally have set. Needed for WBI-signed endpoints
+# (e.g. /xlive/web-room/v1/index/getDanmuInfo).
+_BUVID3_SPI_URL: str = "https://api.bilibili.com/x/frontend/finger/spi"
 
 # B站 QR-poll state codes (NOT the generic API envelope codes).
 _QR_CODE_SCAN_AWAITING: int = 86101   # not scanned yet
@@ -408,6 +414,72 @@ async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Device fingerprint (buvid3) — captured from /x/frontend/finger/spi
+# ---------------------------------------------------------------------------
+
+
+async def fetch_buvid3(client: httpx.AsyncClient) -> str | None:
+    """GET ``/x/frontend/finger/spi`` and return the ``data.b_3`` value.
+
+    B站's QR-login flow sets SESSDATA / bili_jct / DedeUserID via Set-Cookie
+    but does NOT set ``buvid3`` (the device fingerprint). ``buvid3`` is
+    required by some WBI-signed endpoints (e.g.
+    ``/xlive/web-room/v1/index/getDanmuInfo``) and is normally generated
+    by the B站 web client on its first page load via the public
+    ``/x/frontend/finger/spi`` endpoint. We replay that call here right
+    after a successful QR poll so the freshly-persisted ``.env`` carries
+    a usable buvid3 for downstream WBI calls.
+
+    Best-effort: returns ``None`` on any failure (non-zero code, missing
+    ``data.b_3``, HTTP error, malformed body). The caller (auth_routes)
+    threads the result into ``write_env_atomic`` and
+    ``mark_authenticated_after_login`` — ``None`` is acceptable because
+    the SESSDATA + bili_jct pair is already sufficient to authenticate
+    the user; buvid3 is a nice-to-have for the danmaku WebSocket token
+    fetch.
+
+    Args:
+        client: shared ``httpx.AsyncClient``. The same UA / Referer as
+            the QR flow are fine — /spi is a public endpoint that does
+            not require authentication.
+
+    Returns:
+        The ``b_3`` value (a non-empty string), or ``None`` on any
+        failure path. Never raises.
+    """
+    try:
+        response = await client.get(_BUVID3_SPI_URL, headers=_QR_HEADERS)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "fetch_buvid3: /spi request failed: {}", exc
+        )
+        return None
+
+    if response.status_code != 200:
+        logger.warning(
+            "fetch_buvid3: /spi returned status={}", response.status_code
+        )
+        return None
+
+    body = _parse_json_object(response.text)
+    if body.get("code") != 0:
+        logger.warning(
+            "fetch_buvid3: /spi non-zero code={} message={}",
+            body.get("code"),
+            body.get("message"),
+        )
+        return None
+
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return None
+    b3_obj = data.get("b_3")
+    if not isinstance(b3_obj, str) or not b3_obj:
+        return None
+    return b3_obj
+
+
+# ---------------------------------------------------------------------------
 # Atomic .env writer
 # ---------------------------------------------------------------------------
 
@@ -600,6 +672,7 @@ __all__ = [
     "QrAwaitingScanError",
     "QrExpiredError",
     "QrLoginError",
+    "fetch_buvid3",
     "qr_generate",
     "qr_poll",
     "save_cookies_manual",

@@ -22,8 +22,11 @@ Run locally with::
 """
 from __future__ import annotations
 
+import os
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
@@ -36,6 +39,98 @@ from app.api.router import api_router
 from app.auth import session as auth_session_module
 from app.config import settings
 
+# ---------------------------------------------------------------------------
+# One-time .env migration
+# ---------------------------------------------------------------------------
+#
+# Bug 1 / F3: an earlier release wrote cookies to ``backend/.env`` (one
+# level short of the project root) while config.py read
+# ``<repo>/.env`` — on restart the cookies were gone and the user had
+# to re-scan. On the first boot of the fixed build, lift any pre-existing
+# ``backend/.env`` into ``<repo>/.env`` so users who already QR-scanned
+# once don't have to re-scan after the upgrade. The helper is exported
+# (``migrate_legacy_env``) so test_app.py can pin its contract in
+# isolation without spinning up the whole app.
+
+
+def _default_repo_root() -> Path:
+    """Project root: the parent of ``backend/``.
+
+    Resolved from this file's location (``<repo>/backend/app/main.py``)
+    by walking three parents up. Kept as a local helper so test
+    fixtures can pass an explicit ``repo_root`` instead of touching
+    the real on-disk tree.
+    """
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def migrate_legacy_env(
+    *,
+    repo_root: Path | None = None,
+    backend_dir_name: str = "backend",
+) -> bool:
+    """Move ``<repo>/backend/.env`` → ``<repo>/.env`` if the legacy file
+    exists AND no target file exists yet.
+
+    Returns ``True`` when the migration actually moved a file,
+    ``False`` otherwise (no legacy file, or a target already present).
+    Never raises — a missing legacy file or a write failure is logged
+    and the caller proceeds as if no migration was needed.
+
+    Why "no clobber" semantics: a user who already wrote
+    ``<repo>/.env`` with fresh cookies must not have those silently
+    overwritten by an older ``backend/.env`` sitting on disk.
+
+    Args:
+        repo_root: project root to migrate within. Defaults to
+            ``<repo>/`` derived from this file's location; tests pass
+            an explicit ``tmp_path`` to avoid touching the real tree.
+        backend_dir_name: name of the package directory the previous
+            build mistakenly wrote into. Pinned to ``"backend"`` for
+            testability; never use anything else in production.
+    """
+    root = repo_root if repo_root is not None else _default_repo_root()
+    legacy: Path = root / backend_dir_name / ".env"
+    target: Path = root / ".env"
+
+    if not legacy.exists() or not legacy.is_file():
+        return False
+    if target.exists():
+        logger.info(
+            "migrate_legacy_env: legacy {} found but target {} already "
+            "exists — leaving both files alone",
+            legacy,
+            target,
+        )
+        return False
+
+    try:
+        # ``shutil.move`` handles the cross-filesystem case by falling
+        # back to copy+remove; for a same-filesystem move (the common
+        # case) it's a rename. fsync the directory so a crash before
+        # the directory entry commits doesn't leave a half-moved file.
+        shutil.move(str(legacy), str(target))
+        dir_fd = os.open(str(root), os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError as exc:
+        logger.warning(
+            "migrate_legacy_env: failed to move {} → {}: {}",
+            legacy,
+            target,
+            exc,
+        )
+        return False
+
+    logger.info(
+        "migrate_legacy_env: moved legacy {} → {}",
+        legacy,
+        target,
+    )
+    return True
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -43,18 +138,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Startup:
 
-    1. ``auth_session.check_on_startup()`` — verify stored cookies via
+    1. ``migrate_legacy_env`` — one-time lift of a pre-existing
+       ``backend/.env`` into the canonical ``<repo>/.env`` location
+       so users upgrading from a buggy prior build don't have to
+       re-scan. No-op when nothing to migrate.
+    2. ``auth_session.check_on_startup()`` — verify stored cookies via
        ``/x/web-interface/nav``. We access the singleton via its module
        (rather than a top-of-file ``from ... import auth_session``) so
        the test suite can ``monkeypatch.setattr`` the module-level
        binding and have the lifespan observe the mock immediately.
-    2. Create the shared ``httpx.AsyncClient`` used by the B站
+    3. Create the shared ``httpx.AsyncClient`` used by the B站
        auth-flow route handlers. A single instance keeps the
        connection pool warm across requests.
 
     Shutdown: close the ``httpx.AsyncClient`` so its connection pool
     drains cleanly.
     """
+    migrate_legacy_env()
     await auth_session_module.auth_session.check_on_startup()
     app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(15.0, connect=5.0),

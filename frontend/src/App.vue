@@ -82,6 +82,25 @@ onMounted(async () => {
   }
 });
 
+// F3 / Bug 3: after QR login completes, `auth.status` flips from
+// "needs_login" to "authenticated" via pollOnce→fetchStatus. The
+// onMounted fetchMe above does NOT fire on that transition (App.vue
+// was already mounted, so onMounted never runs again) — without this
+// watcher, the welcome banner rendered the "用户" placeholder even
+// though the user just successfully logged in. Watching auth.status
+// and calling fetchMe on every transition to "authenticated" covers
+// BOTH the initial-load case (handled redundantly by the onMounted
+// block above) and the post-QR-success case (only this watcher).
+const onAuthStatusChange = (s: string): void => {
+  if (s === "authenticated") {
+    void auth.fetchMe().catch(() => {
+      // Logged out between status transition and fetchMe — leave userInfo
+      // null and the UI falls back to the "用户" placeholder.
+    });
+  }
+};
+watch(() => auth.status, onAuthStatusChange);
+
 watch(currentRoomId, (newId, oldId) => {
   if (oldId !== null && newId === null) {
     // Disconnected — close both WSs, drop banner, clear stores.

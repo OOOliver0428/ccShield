@@ -748,3 +748,80 @@ def test_save_cookies_manual_raises_login_incomplete_when_nav_data_missing(
         )
 
     assert "keepme" in env_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# fetch_buvid3 — Bug 2 / F3: capture device fingerprint from
+# /x/frontend/finger/spi (B站 doesn't Set-Cookie buvid3 on QR login)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_buvid3_returns_b3_on_code_0() -> None:
+    """Happy path: B站 code 0 with data.b_3 → return that buvid3 value.
+
+    The /spi endpoint is the public way to obtain a device fingerprint
+    when the QR-login flow doesn't Set-Cookie buvid3 itself.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/x/frontend/finger/spi"
+        return httpx.Response(
+            200,
+            json={"code": 0, "message": "0", "data": {"b_3": "ABCD1234XYZ", "b4": "ignored"}},
+        )
+
+    client = make_async_client(handler)
+    from app.bilibili.auth import fetch_buvid3
+
+    result = run(fetch_buvid3(client))
+    assert result == "ABCD1234XYZ"
+
+
+def test_fetch_buvid3_returns_none_on_non_zero_code() -> None:
+    """B站 non-zero code → return None (caller treats as "no buvid3")."""
+    from app.bilibili.auth import fetch_buvid3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"code": -101, "message": "no auth", "data": None}
+        )
+
+    client = make_async_client(handler)
+    result = run(fetch_buvid3(client))
+    assert result is None
+
+
+def test_fetch_buvid3_returns_none_on_missing_data() -> None:
+    """Code 0 but data is missing or b_3 is missing → None (defensive)."""
+    from app.bilibili.auth import fetch_buvid3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    client = make_async_client(handler)
+    result = run(fetch_buvid3(client))
+    assert result is None
+
+
+def test_fetch_buvid3_returns_none_on_http_error() -> None:
+    """5xx from /spi → None (logged but never raised — login is best-effort)."""
+    from app.bilibili.auth import fetch_buvid3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"message": "service down"})
+
+    client = make_async_client(handler)
+    result = run(fetch_buvid3(client))
+    assert result is None
+
+
+def test_fetch_buvid3_returns_none_on_empty_b3() -> None:
+    """Code 0 but b_3 is empty string → None (treated as missing)."""
+    from app.bilibili.auth import fetch_buvid3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": 0, "data": {"b_3": ""}})
+
+    client = make_async_client(handler)
+    result = run(fetch_buvid3(client))
+    assert result is None

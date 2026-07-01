@@ -786,11 +786,15 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
 ) -> None:
     """``/auth/manual`` with no ``buvid3`` still flips state — and leaves
     any pre-existing ``settings.BUVID3`` untouched (we don't blank it
-    out just because the user didn't paste one this round).
+    out just because the user didn't paste one this round AND /spi
+    failed to yield one).
 
     Defensive: ``mark_authenticated_after_login`` treats ``buvid3=None``
-    as "do not touch the in-memory value". This test pins that contract
-    so a future change to eager-clear isn't silently introduced.
+    as "do not touch the in-memory value". The route's Bug-2 /spi-fetch
+    fallback (in production) only runs when the user omitted buvid3;
+    when that fetch ALSO returns None the in-memory BUVID3 must be
+    preserved. This test pins that contract so a future change to
+    eager-clear isn't silently introduced.
     """
     from app.api import auth_routes
     from app.auth.session import AuthState
@@ -815,6 +819,18 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
     monkeypatch.setattr(
         "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
     )
+
+    # Bug 2 / F3 — /spi fallback in the route. The pre-existing test was
+    # written before the route fetched buvid3 from /spi; the contract
+    # being pinned here is the COMBINED behaviour "user omitted buvid3
+    # AND /spi returned nothing → leave the in-memory value alone", so
+    # we mock fetch_buvid3 to return None to simulate the /spi-failed
+    # branch. A separate test (`test_manual_cookies_fetches_buvid3_...`)
+    # covers the /spi-succeeded branch.
+    async def fake_fetch_buvid3(http_client: Any) -> str | None:
+        return None
+
+    monkeypatch.setattr("app.api.auth_routes.fetch_buvid3", fake_fetch_buvid3)
 
     async def fake_mark(
         sessdata: str, bili_jct: str, buvid3: str | None = None
@@ -848,3 +864,298 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
         settings.SESSDATA = ""
         settings.BILI_JCT = ""
         settings.BUVID3 = None
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 / F3: auth_routes._ENV_PATH MUST equal app.config._ENV_FILE so the
+# QR flow writes to the SAME .env the config loader reads on startup.
+# Before the fix, auth_routes computed _PROJECT_ROOT from one extra hop,
+# so write_env_atomic wrote to backend/.env while config.py read
+# <repo>/.env → on process restart the cookies were gone and the user
+# had to re-scan. Pin the single-source-of-truth invariant.
+# ---------------------------------------------------------------------------
+
+
+def test_env_path_matches_config_env_file_single_source_of_truth() -> None:
+    """Bug 1 regression: auth_routes._ENV_PATH is the SAME Path object as
+    app.config._ENV_FILE. A future refactor that re-introduces a divergent
+    computation (4 parents instead of 3) breaks this test immediately.
+    """
+    from app import config as config_module
+    from app.api import auth_routes
+
+    assert auth_routes._ENV_PATH == config_module._ENV_FILE
+    # And specifically NOT the buggy path (backend/.env).
+    assert auth_routes._ENV_PATH.name == ".env"
+    # The path must resolve ABOVE the backend/ package dir — i.e. the
+    # project root, where pydantic-settings expects to find the file.
+    assert "backend" not in auth_routes._ENV_PATH.parts
+
+
+def test_qr_poll_success_passes_buvid3_from_spi_to_write_env_and_state_refresh(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """Bug 2 / F3 regression: successful QR poll must fetch buvid3 via
+    /x/frontend/finger/spi and thread it through BOTH
+    write_env_atomic AND mark_authenticated_after_login. Without buvid3 the
+    /xlive/getDanmuInfo WBI call fails (need device fingerprint).
+    """
+    env_file = tmp_path / ".env"
+    from app.api import auth_routes
+
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_qr_poll(http_client: Any, qrcode_key: str) -> dict[str, str]:
+        return {
+            "status": "success",
+            "sessdata": "qr_sess_xyz",
+            "bili_jct": "qr_jct_xyz",
+            "dede_user_id": "11111",
+        }
+
+    monkeypatch.setattr("app.api.auth_routes.qr_poll", fake_qr_poll)
+
+    # /spi returns a buvid3
+    async def fake_fetch_buvid3(http_client: Any) -> str | None:
+        return "BUVID3_FROM_SPI"
+
+    monkeypatch.setattr("app.api.auth_routes.fetch_buvid3", fake_fetch_buvid3)
+
+    write_calls: list[dict[str, Any]] = []
+
+    def fake_write_env_atomic(
+        sessdata: str, bili_jct: str, buvid3: str | None, env_path: Path
+    ) -> None:
+        write_calls.append(
+            {"sessdata": sessdata, "bili_jct": bili_jct, "buvid3": buvid3}
+        )
+
+    monkeypatch.setattr("app.api.auth_routes.write_env_atomic", fake_write_env_atomic)
+
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr("app.auth.session.auth_session", mock_auth_session)
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    poll = client.get(
+        "/api/auth/qr/poll?qrcode_key=abc",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert poll.status_code == 200
+    assert poll.json() == {"status": "success"}
+
+    # write_env_atomic was called with buvid3 from /spi (not None).
+    assert len(write_calls) == 1
+    assert write_calls[0]["sessdata"] == "qr_sess_xyz"
+    assert write_calls[0]["bili_jct"] == "qr_jct_xyz"
+    assert write_calls[0]["buvid3"] == "BUVID3_FROM_SPI"
+
+    # mark_authenticated_after_login received the same buvid3 → settings.BUVID3 set.
+    assert settings.BUVID3 == "BUVID3_FROM_SPI"
+
+
+def test_qr_poll_success_when_spi_fails_still_succeeds(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """Best-effort: if /spi returns None (network blip / B站 down), the
+    QR login still completes with SESSDATA+bili_jct. buvid3=None is fine —
+    the /env value of BUVID3 is preserved (write_env_atomic skips it on None).
+    """
+    env_file = tmp_path / ".env"
+    from app.api import auth_routes
+
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_qr_poll(http_client: Any, qrcode_key: str) -> dict[str, str]:
+        return {
+            "status": "success",
+            "sessdata": "sess",
+            "bili_jct": "jct",
+            "dede_user_id": "1",
+        }
+
+    monkeypatch.setattr("app.api.auth_routes.qr_poll", fake_qr_poll)
+
+    async def fake_fetch_buvid3(http_client: Any) -> str | None:
+        return None  # /spi down
+
+    monkeypatch.setattr("app.api.auth_routes.fetch_buvid3", fake_fetch_buvid3)
+
+    write_calls: list[dict[str, Any]] = []
+
+    def fake_write_env_atomic(
+        sessdata: str, bili_jct: str, buvid3: str | None, env_path: Path
+    ) -> None:
+        write_calls.append(
+            {"sessdata": sessdata, "bili_jct": bili_jct, "buvid3": buvid3}
+        )
+
+    monkeypatch.setattr("app.api.auth_routes.write_env_atomic", fake_write_env_atomic)
+
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr("app.auth.session.auth_session", mock_auth_session)
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    poll = client.get(
+        "/api/auth/qr/poll?qrcode_key=abc",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert poll.status_code == 200
+    assert len(write_calls) == 1
+    # buvid3=None on the write call (write_env_atomic leaves existing BUVID3 alone).
+    assert write_calls[0]["buvid3"] is None
+    # The mark call also got buvid3=None.
+    mark_call = mock_auth_session.mark_authenticated_after_login.call_args
+    assert mark_call is not None
+    assert mark_call.kwargs.get("buvid3") is None or mark_call.args[2] is None
+
+
+def test_manual_cookies_fetches_buvid3_when_user_did_not_provide_one(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """Plan B (manual cookies): if the user pasted SESSDATA+bili_jct but
+    did NOT paste buvid3, the route should fetch it via /spi and persist
+    it. B站 /nav validation will otherwise succeed but /spi-derived buvid3
+    is still the right place to seed a fresh fingerprint.
+    """
+    env_file = tmp_path / ".env"
+    from app.api import auth_routes
+
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_save_cookies_manual(
+        sessdata: str,
+        bili_jct: str,
+        buvid3: str | None,
+        env_path: Path,
+    ) -> dict[str, Any]:
+        return {"uname": "tester", "mid": 99}
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
+    )
+
+    fetch_calls: list[bool] = []
+
+    async def fake_fetch_buvid3(http_client: Any) -> str | None:
+        fetch_calls.append(True)
+        return "SPI_BUVID3_FOR_MANUAL"
+
+    monkeypatch.setattr("app.api.auth_routes.fetch_buvid3", fake_fetch_buvid3)
+
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        settings.SESSDATA = sessdata
+        settings.BILI_JCT = bili_jct
+        if buvid3 is not None:
+            settings.BUVID3 = buvid3
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr("app.auth.session.auth_session", mock_auth_session)
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    response = client.post(
+        "/api/auth/manual",
+        json={"sessdata": "msess", "bili_jct": "mjct"},  # no buvid3
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 200
+    # /spi was called exactly once.
+    assert len(fetch_calls) == 1
+    # The mark call received the spi-derived buvid3.
+    mark_call = mock_auth_session.mark_authenticated_after_login.call_args
+    assert mark_call is not None
+    buvid3_passed = mark_call.kwargs.get("buvid3")
+    if buvid3_passed is None and len(mark_call.args) >= 3:
+        buvid3_passed = mark_call.args[2]
+    assert buvid3_passed == "SPI_BUVID3_FOR_MANUAL"
+
+
+def test_manual_cookies_skips_spi_when_user_provided_buvid3(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_auth_session: MagicMock,
+) -> None:
+    """Plan B: if the user DID paste buvid3, don't call /spi — trust the
+    user's input verbatim (it's the cookie they extracted from a real
+    browser session, which is what B站 expects).
+    """
+    env_file = tmp_path / ".env"
+    from app.api import auth_routes
+
+    monkeypatch.setattr(auth_routes, "_ENV_PATH", env_file)
+
+    async def fake_save_cookies_manual(
+        sessdata: str,
+        bili_jct: str,
+        buvid3: str | None,
+        env_path: Path,
+    ) -> dict[str, Any]:
+        return {"uname": "tester", "mid": 99}
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
+    )
+
+    fetch_calls: list[bool] = []
+
+    async def fake_fetch_buvid3(http_client: Any) -> str | None:
+        fetch_calls.append(True)
+        return "SHOULD_NOT_BE_USED"
+
+    monkeypatch.setattr("app.api.auth_routes.fetch_buvid3", fake_fetch_buvid3)
+
+    from app.auth.session import AuthState
+    from app.config import settings
+
+    async def fake_mark(
+        sessdata: str, bili_jct: str, buvid3: str | None = None
+    ) -> AuthState:
+        mock_auth_session.state = AuthState.AUTHENTICATED
+        return AuthState.AUTHENTICATED
+
+    monkeypatch.setattr("app.auth.session.auth_session", mock_auth_session)
+    mock_auth_session.mark_authenticated_after_login.side_effect = fake_mark
+
+    response = client.post(
+        "/api/auth/manual",
+        json={"sessdata": "ms", "bili_jct": "mj", "buvid3": "USER_BUVID3"},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 200
+    # /spi was NOT called — user's buvid3 was used directly.
+    assert len(fetch_calls) == 0
