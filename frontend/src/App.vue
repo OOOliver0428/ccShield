@@ -43,6 +43,15 @@ import BanList from "./components/BanList.vue";
  * * BanControls is intentionally NOT mounted at the App level —
  *   it lives inline per danmaku row (the hover/popover wiring is
  *   owned by App.vue but rendered by a per-row slot on DanmakuList).
+ *
+ * Bug B regression (a.log): QrLogin's onMounted called
+ * ``auth.startQr()`` while ``auth.status === 'loading'``, racing the
+ * parent's ``await bootstrap(); await auth.fetchStatus();`` chain.
+ * The POST went out without the LOCAL_TOKEN bearer header → 401 +
+ * visible "生成二维码失败" error. We now gate QrLogin's mount on
+ * ``status !== 'loading'`` so it cannot call startQr until bootstrap
+ * has set the token, and render a "加载中…" placeholder during the
+ * loading window.
  */
 const auth = useAuthStore();
 const room = useRoomStore();
@@ -133,7 +142,16 @@ function handleBridgeEvent(event: BridgeEvent): void {
 
 <template>
   <main class="app-shell">
-    <QrLogin v-if="auth.status !== 'authenticated'" />
+    <div
+      v-if="auth.status === 'loading'"
+      class="loading-placeholder"
+      data-testid="loading-placeholder"
+    >
+      加载中…
+    </div>
+    <QrLogin
+      v-else-if="auth.status !== 'authenticated'"
+    />
     <section v-else class="authenticated-shell" data-testid="authenticated-shell">
       <header class="topbar">
         <h1 class="brand">reccshield</h1>
@@ -160,6 +178,16 @@ function handleBridgeEvent(event: BridgeEvent): void {
   display: flex;
   align-items: flex-start;
   justify-content: center;
+}
+.loading-placeholder {
+  width: 360px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 14px;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 4px;
+  background: var(--el-fill-color-blank, #fff);
 }
 .authenticated-shell {
   width: 100%;

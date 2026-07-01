@@ -143,8 +143,8 @@ def test_qr_generate_raises_when_data_missing() -> None:
 
 
 def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
-    """Primary path: B站 code 0 + url with SESSDATA/bili_jct/DedeUserID
-    query params → return them as the success dict."""
+    """Legacy path: B站 code 0 + url with SESSDATA/bili_jct/DedeUserID
+    query params and no Set-Cookie → return them as the success dict."""
 
     success_url = (
         "https://passport.biligame.com/x/passport-login/web/crossDomain"
@@ -171,12 +171,79 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
 
 
 # ---------------------------------------------------------------------------
-# qr_poll — fallback: bili_jct from Set-Cookie header
+# qr_poll — Bug A regression: B站 no longer returns data.url, cookies live
+# in the Set-Cookie response header ONLY. The current B站 poll success
+# shape is ``{code: 0, data: {refresh_token: ...}}`` with SESSDATA /
+# bili_jct / DedeUserID arriving as Set-Cookie on the response. The poll
+# route MUST capture them and return success — the previous code
+# short-circuited on the missing data.url field and 500-ed.
+# ---------------------------------------------------------------------------
+
+
+def test_qr_poll_success_captures_cookies_from_set_cookie_when_url_missing() -> None:
+    """Bug A core scenario (from a.log): Set-Cookie carries all three
+    cookies, ``data.url`` is absent. Must return a success dict."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                ("Set-Cookie", "SESSDATA=fake_sess_from_header; Path=/; HttpOnly"),
+                ("Set-Cookie", "bili_jct=fake_jct_from_header; Path=/; HttpOnly"),
+                ("Set-Cookie", "DedeUserID=99999; Path=/; HttpOnly"),
+            ],
+            json={"code": 0, "data": {"refresh_token": "rt"}},  # no url field
+        )
+
+    client = make_async_client(handler)
+    result = run(qr_poll(client, "fake_key"))
+
+    assert result["status"] == "success"
+    assert result["sessdata"] == "fake_sess_from_header"
+    assert result["bili_jct"] == "fake_jct_from_header"
+    assert result["dede_user_id"] == "99999"
+
+
+def test_qr_poll_success_merges_set_cookie_and_data_url() -> None:
+    """Mixed coverage: Set-Cookie carries one cookie, data.url carries the
+    others. Both paths contribute and the result is a union (Set-Cookie
+    wins on collision)."""
+
+    url_partial = (
+        "https://passport.biligame.com/x/passport-login/web/crossDomain"
+        "?DedeUserID=12345&SESSDATA=fake_sess_from_url"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                ("Set-Cookie", "bili_jct=fake_jct_from_cookie; Path=/; HttpOnly"),
+                ("Set-Cookie", "DedeUserID=cookie_dede; Path=/; HttpOnly"),
+            ],
+            json={"code": 0, "data": {"url": url_partial, "refresh_token": "rt"}},
+        )
+
+    client = make_async_client(handler)
+    result = run(qr_poll(client, "fake_key"))
+
+    assert result["status"] == "success"
+    # Only bili_jct in Set-Cookie; SESSDATA was missing from Set-Cookie
+    # so it came from data.url.
+    assert result["sessdata"] == "fake_sess_from_url"
+    assert result["bili_jct"] == "fake_jct_from_cookie"
+    # DedeUserID was set in BOTH; Set-Cookie wins (primary path).
+    assert result["dede_user_id"] == "cookie_dede"
+
+
+# ---------------------------------------------------------------------------
+# qr_poll — fallback: bili_jct from Set-Cookie header (legacy behaviour)
 # ---------------------------------------------------------------------------
 
 
 def test_qr_poll_success_falls_back_to_set_cookie_for_bili_jct() -> None:
-    """Secondary path: data.url has NO bili_jct, but Set-Cookie does."""
+    """Mixed legacy: data.url has SESSDATA+DedeUserID but no bili_jct,
+    Set-Cookie carries bili_jct → success, bili_jct from Set-Cookie."""
 
     url_without_jct = (
         "https://passport.biligame.com/x/passport-login/web/crossDomain"
@@ -186,7 +253,7 @@ def test_qr_poll_success_falls_back_to_set_cookie_for_bili_jct() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"Set-Cookie": "bili_jct=fake_jct_from_cookie; Path=/; HttpOnly"},
+            headers=[("Set-Cookie", "bili_jct=fake_jct_from_cookie; Path=/; HttpOnly")],
             json={"code": 0, "data": {"url": url_without_jct, "refresh_token": "rt"}},
         )
 
@@ -194,15 +261,15 @@ def test_qr_poll_success_falls_back_to_set_cookie_for_bili_jct() -> None:
     result = run(qr_poll(client, "fake_key"))
 
     assert result["status"] == "success"
-    # SESSDATA came from the URL (url-parsed takes priority for sessdata)
+    # SESSDATA / DedeUserID not in Set-Cookie → fell back to data.url.
     assert result["sessdata"] == "fake_sessdata_v2"
-    # bili_jct came from the Set-Cookie fallback
+    # bili_jct is in Set-Cookie → captured from Set-Cookie.
     assert result["bili_jct"] == "fake_jct_from_cookie"
     assert result["dede_user_id"] == "111"
 
 
 # ---------------------------------------------------------------------------
-# qr_poll — bili_jct missing from BOTH paths → LoginIncompleteError
+# qr_poll — cookies missing from BOTH paths → LoginIncompleteError
 # ---------------------------------------------------------------------------
 
 
@@ -225,13 +292,39 @@ def test_qr_poll_raises_login_incomplete_when_bili_jct_missing_everywhere() -> N
         run(qr_poll(client, "fake_key"))
 
 
-def test_qr_poll_raises_login_incomplete_when_url_field_missing() -> None:
-    """Adversarial: data.url is missing entirely → LoginIncompleteError, no crash."""
+def test_qr_poll_raises_login_incomplete_when_no_cookies_anywhere() -> None:
+    """Adversarial: data.url absent AND Set-Cookie empty → LoginIncompleteError
+    (the SESSDATA / bili_jct guard still trips)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"code": 0, "data": {"refresh_token": "rt"}},  # no url
+            json={"code": 0, "data": {"refresh_token": "rt"}},  # no url field
+        )
+
+    client = make_async_client(handler)
+    with pytest.raises(LoginIncompleteError):
+        run(qr_poll(client, "fake_key"))
+
+
+def test_qr_poll_raises_login_incomplete_when_sessdata_missing_everywhere() -> None:
+    """Adversarial: bili_jct present everywhere but SESSDATA missing from BOTH
+    Set-Cookie and data.url → still incomplete."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[("Set-Cookie", "bili_jct=only_jct_no_sess; Path=/; HttpOnly")],
+            json={
+                "code": 0,
+                "data": {
+                    "url": (
+                        "https://passport.biligame.com/x/passport-login/web/crossDomain"
+                        "?DedeUserID=333&bili_jct=still_only_jct"
+                    ),
+                    "refresh_token": "rt",
+                },
+            },
         )
 
     client = make_async_client(handler)

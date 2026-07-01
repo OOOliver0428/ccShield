@@ -15,13 +15,17 @@ This module owns the QR-code login flow that reccshield uses to obtain
        code 0     → login complete             → success dict
        other     → ``QrLoginError``
 
-3. On success (code 0), the auth cookies live in the ``data.url`` query
-   params (B站 returns a redirect URL containing SESSDATA, bili_jct,
-   DedeUserID). We capture ``bili_jct`` from the URL FIRST (primary path)
-   and only fall back to ``response.cookies['bili_jct']`` (Set-Cookie
-   header) when the URL does not carry it. If neither path yields a
-   non-empty ``bili_jct`` AND ``SESSDATA``, ``LoginIncompleteError`` is
-   raised — we never persist a partial credential set.
+3. On success (code 0), the auth cookies live in EITHER ``data.url`` query
+   params (legacy B站 format) OR the ``Set-Cookie`` response header
+   (current B站 format — they stopped returning ``data.url`` sometime in
+   2024). We capture each of ``SESSDATA`` / ``bili_jct`` /
+   ``DedeUserID`` from ``Set-Cookie`` FIRST and fall back to
+   ``data.url``'s query params for any cookie still missing. The
+   ``data.url`` field is NO LONGER required to exist: a successful
+   cookie-only-in-Set-Cookie response is now a valid login. If both
+   paths are empty for ``SESSDATA`` or ``bili_jct``,
+   ``LoginIncompleteError`` is raised — we never persist a partial
+   credential set.
 
 4. ``write_env_atomic`` persists the three cookies to ``.env`` by writing
    a ``.env.tmp`` staging file first, then ``os.replace``-ing it into
@@ -51,6 +55,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from loguru import logger
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -160,9 +165,7 @@ def _parse_json_object(text: str) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def _first_query_value(
-    parsed_url: object, params: object, key: str
-) -> str:
+def _first_query_value(params: object, key: str) -> str:
     """Return the first ``params[key]`` entry if it is a non-empty string."""
     if not isinstance(params, dict):
         return ""
@@ -171,47 +174,84 @@ def _first_query_value(
         return ""
     first: object = raw[0]
     return first if isinstance(first, str) else ""
-    # parsed_url reserved for future use (kept for symmetry / debug)
-    del parsed_url
 
 
-def _capture_success_cookies(
-    url: str, response_cookies: httpx.Response | httpx.AsyncClient | object,
-) -> dict[str, str]:
+def _url_query_params(url: str) -> dict[str, list[str]]:
+    """Parse ``url``'s query string into a ``{name: [values]}`` dict.
+
+    Empty / non-string URLs → empty dict (treated as "no fallback data").
+    Used to extract SESSDATA / bili_jct / DedeUserID from B站's legacy
+    ``data.url`` field when Set-Cookie did not carry them.
+    """
+    if not isinstance(url, str) or not url:
+        return {}
+    parsed = urlparse(url)
+    if not parsed.query:
+        return {}
+    return parse_qs(parsed.query)
+
+
+def _cookie_value(response: httpx.Response, name: str) -> str:
+    """Pull a single cookie value from the response's ``Set-Cookie`` jar.
+
+    Returns ``""`` when the jar is not present or has no entry for
+    ``name``. ``httpx.Response.cookies`` is a ``http.cookies.SimpleCookie``
+    that already strips ``Path=``/``HttpOnly``/etc. and yields the raw
+    value via ``.get(name)``.
+    """
+    jar: object = getattr(response, "cookies", None)
+    if jar is None or not hasattr(jar, "get"):
+        return ""
+    raw: object = jar.get(name)  # type: ignore[attr-defined]
+    return raw if isinstance(raw, str) else ""
+
+
+def _capture_success_cookies(response: httpx.Response) -> dict[str, str]:
     """Pull SESSDATA / bili_jct / DedeUserID from B站's success response.
 
-    Strategy (dual-path):
-      1. Parse ``url`` query params with ``urllib.parse.parse_qs``. The
-         URL is the PRIMARY source — B站 builds it server-side and is
-         more reliable than cookie parsing.
-      2. If ``bili_jct`` is empty in the URL, fall back to the response's
-         Set-Cookie (``response_cookies.get('bili_jct')``).
-      3. SESSDATA and DedeUserID come from the URL ONLY — B站 does not
-         set them in Set-Cookie on this endpoint.
+    Strategy (dual-path, per-cookie):
+      1. PRIMARY: ``response.cookies`` (the Set-Cookie header jar) — the
+         current B站 format returns the three cookies as Set-Cookie
+         headers and no longer populates ``data.url`` (see a.log).
+      2. FALLBACK: parse the ``data.url`` query params (legacy B站
+         format) for any cookie still missing after Set-Cookie.
 
-    The third positional argument exists so this function is callable
-    against both a raw ``httpx.Response`` and any object exposing a
-    ``cookies`` jar; the public callers always pass ``response``.
+    Per-cookie union: each cookie name is resolved independently, so a
+    partial Set-Cookie (only ``bili_jct``) plus a partial ``data.url``
+    (SESSDATA + DedeUserID) merges into a complete credential set.
+
+    Returns: ``{sessdata, bili_jct, dede_user_id}`` — each value is
+    ``""`` when neither path yielded a non-empty match.
     """
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
+    data_url: str = ""
+    body = _parse_json_object(response.text)
+    body_data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(body_data, dict):
+        url_obj = body_data.get("url")
+        if isinstance(url_obj, str):
+            data_url = url_obj
+    url_params: dict[str, list[str]] = _url_query_params(data_url)
 
-    sessdata = _first_query_value(parsed_url, query_params, "SESSDATA")
-    dede_user_id = _first_query_value(parsed_url, query_params, "DedeUserID")
-    bili_jct = _first_query_value(parsed_url, query_params, "bili_jct")
+    sessdata = _cookie_value(response, "SESSDATA") or _first_query_value(
+        url_params, "SESSDATA"
+    )
+    bili_jct = _cookie_value(response, "bili_jct") or _first_query_value(
+        url_params, "bili_jct"
+    )
+    dede_user_id = _cookie_value(response, "DedeUserID") or _first_query_value(
+        url_params, "DedeUserID"
+    )
 
-    # Fallback: only used when the URL did not carry bili_jct.
-    if not bili_jct:
-        # ``response_cookies`` here is the httpx.Response itself; we look
-        # up via its .cookies jar so the caller doesn't need to extract it.
-        candidate: object = None
-        if isinstance(response_cookies, httpx.Response):
-            candidate = response_cookies.cookies.get("bili_jct")
-        elif hasattr(response_cookies, "cookies"):
-            jar: object = getattr(response_cookies, "cookies", None)
-            if jar is not None and hasattr(jar, "get"):
-                candidate = jar.get("bili_jct")  # type: ignore[attr-defined]
-        bili_jct = candidate if isinstance(candidate, str) else ""
+    # Diagnostic: which path contributed which cookie? Distinguishes
+    # "B站 format change" (everything from Set-Cookie) from
+    # "deploy regression" (mixed sources).
+    logger.info(
+        "qr_poll success cookies captured: "
+        "sessdata={sess_src}, bili_jct={jct_src}, dede_user_id={dede_src}",
+        sess_src="Set-Cookie" if _cookie_value(response, "SESSDATA") else "data.url",
+        jct_src="Set-Cookie" if _cookie_value(response, "bili_jct") else "data.url",
+        dede_src="Set-Cookie" if _cookie_value(response, "DedeUserID") else "data.url",
+    )
 
     return {
         "sessdata": sessdata,
@@ -273,7 +313,9 @@ async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
         QrExpiredError:        code 86038 — the QR expired, regenerate.
         QrAwaitingScanError:   code 86101 — user has not scanned yet.
         QrAwaitingConfirmError: code 86090 — scanned, awaiting phone confirm.
-        LoginIncompleteError:   code 0 but SESSDATA / bili_jct missing.
+        LoginIncompleteError:   code 0 but SESSDATA / bili_jct missing
+                                after BOTH Set-Cookie and ``data.url`` were
+                                consulted.
         QrLoginError:           any other non-zero code, or a malformed body.
     """
     response = await client.get(
@@ -296,16 +338,10 @@ async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
             f"qr_poll: unexpected code={code!r} message={body.get('message')!r}"
         )
 
-    # code == 0: success — capture cookies.
-    data = body.get("data")
-    if not isinstance(data, dict):
-        raise LoginIncompleteError("qr_poll: success but data missing/non-object")
-
-    url = data.get("url")
-    if not isinstance(url, str) or not url:
-        raise LoginIncompleteError("qr_poll: success but data.url missing")
-
-    cookies = _capture_success_cookies(url, response)
+    # code == 0: success — capture cookies from BOTH Set-Cookie and
+    # ``data.url`` (Set-Cookie is primary; ``data.url`` is the legacy
+    # fallback for any cookie still missing).
+    cookies = _capture_success_cookies(response)
 
     if not cookies["bili_jct"]:
         raise LoginIncompleteError(

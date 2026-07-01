@@ -16,6 +16,7 @@ import { useAuthStore } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
 import { useBanStore } from "./stores/ban";
 import App from "./App.vue";
+import QrLogin from "./components/QrLogin.vue";
 
 class FakeMessageEvent extends Event {
   data: string;
@@ -287,5 +288,83 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     expect(text).toContain("7777");
     // The "用户" placeholder must NOT appear once userInfo is set.
     expect(text).not.toMatch(/欢迎,\s*用户/);
+  });
+
+  // -----------------------------------------------------------------------
+  // Bug B regression — the 401 race on first load. a.log showed:
+  //   POST /api/auth/qr/start 401  ← fires before bootstrap sets the token
+  //   GET  /api/auth/bootstrap 200
+  //   GET  /api/auth/status     200
+  // Root cause: QrLogin's onMounted ran startQr while auth.status was still
+  // "loading" (the template rendered QrLogin because v-if only excluded
+  // "authenticated"), so the POST had no Authorization header. Fix: gate
+  // the QrLogin mount on auth.status !== "loading" so it cannot call
+  // startQr until bootstrap has set the token, and render an explicit
+  // "加载中…" placeholder during the loading state.
+  // -----------------------------------------------------------------------
+  it("Bug B: while auth.status === 'loading' QrLogin is not mounted and the loading placeholder is shown", async () => {
+    let startCalls = 0;
+    let release!: () => void;
+    const ready = new Promise<void>((r) => {
+      release = r;
+    });
+
+    server.use(
+      http.get("*/api/auth/bootstrap", async () => {
+        await ready;
+        return HttpResponse.json({ token: "local-tok" });
+      }),
+      http.get("*/api/auth/status", async () => {
+        await ready;
+        return HttpResponse.json({ state: "needs_login" });
+      }),
+      http.post("*/api/auth/qr/start", () => {
+        startCalls += 1;
+        return HttpResponse.json({
+          qrcode_url: "data:image/png;base64,X",
+          qrcode_key: "k",
+        });
+      }),
+      http.get("*/api/auth/qr/poll", () =>
+        HttpResponse.json({ status: "scanning" }),
+      ),
+    );
+
+    const wrapper = mount(App);
+
+    const auth = useAuthStore();
+    expect(auth.status).toBe("loading");
+    expect(auth.token).toBe("");
+
+    // Flush microtasks a few times — if the bug were unfixed, QrLogin's
+    // onMounted would have fired startQr by now (without a token, which
+    // would 401 in production). After the gate fix, QrLogin must NOT
+    // exist in the DOM yet and /qr/start must not have been called.
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    // Loading placeholder is visible (replaces the would-be QrLogin).
+    const placeholder = wrapper.find('[data-testid="loading-placeholder"]');
+    expect(placeholder.exists()).toBe(true);
+    expect(placeholder.text()).toContain("加载中");
+    // QrLogin is not rendered.
+    expect(wrapper.findComponent(QrLogin).exists()).toBe(false);
+    // No premature POST /qr/start with empty token.
+    expect(startCalls).toBe(0);
+
+    // Now release bootstrap+status so the App's onMounted can finish.
+    release();
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    // Status flipped to needs_login (NOT "authenticated") — so QrLogin
+    // must now be mounted AND startQr must have been called once.
+    expect(auth.status).toBe("needs_login");
+    expect(auth.token).toBe("local-tok");
+    expect(wrapper.findComponent(QrLogin).exists()).toBe(true);
+    expect(startCalls).toBe(1);
+    expect(wrapper.find('[data-testid="loading-placeholder"]').exists()).toBe(false);
   });
 });
