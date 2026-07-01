@@ -29,15 +29,13 @@ install:
 
 dev:
 	@command -v concurrently >/dev/null 2>&1 || { \
-		echo "concurrently not installed; install with: bun add -g concurrently"; \
-		echo "Falling back to sequential start (backend in background, then frontend)…"; \
-		cd backend && uv run uvicorn app.main:app --reload --port 8000 & \
-		cd frontend && bun run dev; \
-		exit 0; \
+		echo "ERROR: concurrently not installed."; \
+		echo "Run: cd frontend && bun install (concurrently is a frontend devDep)."; \
+		exit 1; \
 	}
-	concurrently --names "backend,frontend" --prefix-colors "cyan,magenta" \
-		"cd backend && uv run uvicorn app.main:app --reload --port 8000" \
-		"cd frontend && bun run dev"
+	cd frontend && concurrently --names "backend,frontend" --prefix-colors "cyan,magenta" \
+		"cd $(CURDIR)/backend && uv run uvicorn app.main:app --reload --port 8000" \
+		"bun run dev"
 
 test:
 	cd backend && uv run pytest

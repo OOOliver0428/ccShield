@@ -229,4 +229,19 @@ describe("BanlistWS", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fakeInstances).toHaveLength(1);
   });
+
+  // F3 / Bug 4 regression — Intentional close() must NOT schedule a
+  // reconnect (banlist panel stays cleared after disconnect).
+  it("close() suppresses the onclose-driven reconnect schedule", async () => {
+    const ws = new BanlistWS(1, "tok");
+    ws.connect();
+    fakeInstances[0]!.simulateOpen();
+
+    // User-initiated close — FakeWS.close() fires onclose.
+    ws.close();
+    expect(fakeInstances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fakeInstances).toHaveLength(1);
+  });
 });

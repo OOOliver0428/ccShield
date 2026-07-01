@@ -161,4 +161,37 @@ describe("auth store", () => {
       expect(store.userInfo).toEqual({ uname: "tester", mid: 12345 });
     });
   });
+
+  // F3 / Bug 5 regression — userInfo must be populated on QR login
+  // (not just manual). The QR path was: startQr → pollOnce success
+  // → fetchStatus; nothing ever called /auth/me, so userInfo stayed
+  // null and App.vue rendered "用户" instead of the real name.
+  describe("fetchMe", () => {
+    it("GETs /api/auth/me and populates userInfo", async () => {
+      server.use(
+        http.get("*/api/auth/me", () =>
+          HttpResponse.json({ uname: "alice", mid: 999 }),
+        ),
+      );
+
+      const store = useAuthStore();
+      expect(store.userInfo).toBeNull();
+
+      await store.fetchMe();
+
+      expect(store.userInfo).toEqual({ uname: "alice", mid: 999 });
+    });
+
+    it("leaves userInfo untouched when /auth/me returns 401", async () => {
+      server.use(
+        http.get("*/api/auth/me", () =>
+          HttpResponse.json({ detail: "unauth" }, { status: 401 }),
+        ),
+      );
+
+      const store = useAuthStore();
+      await expect(store.fetchMe()).rejects.toBeTruthy();
+      expect(store.userInfo).toBeNull();
+    });
+  });
 });

@@ -272,4 +272,51 @@ describe("BridgeWS", () => {
 
     ws.close();
   });
+
+  // F3 / Bug 4 regression — Intentional close() must NOT fire onDisconnect
+  // (no reconnect scheduled either). Without the guard, the UI shows a
+  // stale "正在重连" banner after the user clicks "断开".
+  it("close() suppresses the onclose-driven onDisconnect + scheduleReconnect", async () => {
+    let disconnects = 0;
+    const ws = new BridgeWS(1, "tok", {
+      onMessage: (): void => {},
+      onDisconnect: (): void => {
+        disconnects += 1;
+      },
+      onError: (): void => {},
+    });
+    ws.connect();
+    fakeInstances[0]!.simulateOpen();
+
+    // User-initiated close — the FakeWS.close() fires onclose.
+    ws.close();
+    expect(disconnects).toBe(0);
+    expect(fakeInstances).toHaveLength(1);
+
+    // No reconnect should be scheduled.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fakeInstances).toHaveLength(1);
+  });
+
+  // Existing reconnect-on-unintentional-close contract still holds.
+  it("simulateClose() (unintentional) still fires onDisconnect and reconnects", async () => {
+    let disconnects = 0;
+    const ws = new BridgeWS(1, "tok", {
+      onMessage: (): void => {},
+      onDisconnect: (): void => {
+        disconnects += 1;
+      },
+      onError: (): void => {},
+    });
+    ws.connect();
+    fakeInstances[0]!.simulateClose();
+
+    expect(disconnects).toBe(1);
+
+    // Reconnect is scheduled — first backoff is 3s.
+    await vi.advanceTimersByTimeAsync(3_001);
+    expect(fakeInstances.length).toBeGreaterThanOrEqual(2);
+
+    ws.close();
+  });
 });

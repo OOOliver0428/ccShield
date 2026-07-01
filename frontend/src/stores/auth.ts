@@ -101,6 +101,21 @@ export const useAuthStore = defineStore("auth", () => {
     await fetchStatus();
   }
 
+  // F3 / Bug 5 — populate userInfo for *every* authenticated entry
+  // path (manual login + QR login + page reload). The backend's
+  // /auth/me returns {uname, mid} when a session is active and 401
+  // otherwise; we forward rejections so the caller (App.vue) can
+  // distinguish "logged out" from "user not yet known".
+  async function fetchMe(): Promise<void> {
+    const response = await httpClient.get<{ uname: string; mid: number }>(
+      "/auth/me",
+    );
+    userInfo.value = {
+      uname: response.data.uname,
+      mid: response.data.mid,
+    };
+  }
+
   return {
     status,
     token,
@@ -110,6 +125,7 @@ export const useAuthStore = defineStore("auth", () => {
     qrPollStatus,
     setToken,
     fetchStatus,
+    fetchMe,
     startQr,
     loginManual,
   };

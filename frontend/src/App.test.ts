@@ -260,4 +260,32 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     expect(banStore.banList).toHaveLength(0);
     expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(false);
   });
+
+  // F3 / Bug 5 regression — on initial mount, App.vue must populate
+  // userInfo via /api/auth/me after fetchStatus confirms authenticated.
+  // Without this the welcome banner shows "用户" instead of the real name.
+  it("calls fetchMe() on mount when status === authenticated, renders the uname", async () => {
+    let meCalled = 0;
+    server.use(
+      http.get("*/api/auth/me", () => {
+        meCalled += 1;
+        return HttpResponse.json({ uname: "alice", mid: 7777 });
+      }),
+    );
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await flushPromises();
+
+    const auth = useAuthStore();
+    expect(auth.status).toBe("authenticated");
+    expect(meCalled).toBe(1);
+    expect(auth.userInfo).toEqual({ uname: "alice", mid: 7777 });
+    const text = wrapper.text();
+    expect(text).toContain("alice");
+    // mid rendered in the welcome banner.
+    expect(text).toContain("7777");
+    // The "用户" placeholder must NOT appear once userInfo is set.
+    expect(text).not.toMatch(/欢迎,\s*用户/);
+  });
 });

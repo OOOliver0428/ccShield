@@ -26,6 +26,11 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
+        // F3 / Bug 2: BridgeWS + BanlistWS hit /api/ws/* during dev —
+        // vite's HTTP proxy does NOT forward WebSocket upgrade requests
+        // unless `ws: true` is set, so all danmaku flows were silently
+        // dead. Verified via code inspection of the proxy config.
+        ws: true,
       },
     },
   },

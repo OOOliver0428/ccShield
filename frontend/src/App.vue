@@ -58,6 +58,19 @@ let banWs: BanlistWS | null = null;
 onMounted(async () => {
   await bootstrap();
   await auth.fetchStatus();
+  // F3 / Bug 5: the QR path never calls loginManual (which is the only
+  // place userInfo was being set). On page-reload while already authed
+  // we also have nothing in userInfo — so populate it from /auth/me
+  // whenever the backend says we're authenticated. 401 is ignored
+  // (user is logged out; userInfo stays null and the UI falls back to
+  // "用户").
+  if (auth.status === "authenticated") {
+    try {
+      await auth.fetchMe();
+    } catch {
+      // Logged out between fetchStatus and fetchMe — leave userInfo null.
+    }
+  }
 });
 
 watch(currentRoomId, (newId, oldId) => {
