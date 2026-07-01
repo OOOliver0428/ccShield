@@ -22,6 +22,7 @@ Test count: 10 (one per spec scenario):
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,6 +49,13 @@ def _stub_bili() -> BilibiliClient:
     see the right type without importing the heavy module.
     """
     return cast("BilibiliClient", object())
+
+
+class _StubBiliWithInit:
+    """Stand-in that DOES have a settable ``get_room_init`` for resolver tests."""
+
+    def __init__(self) -> None:
+        self.get_room_init: AsyncMock | None = None
 
 # ---------------------------------------------------------------------------
 # FakeDanmakuClient — drop-in for app.bilibili.danmaku_ws.DanmakuClient.
@@ -389,6 +397,58 @@ async def test_connect_room_b_disconnects_room_a_first() -> None:
     assert client_a.started is True
     assert client_b.started is True
     assert sess.room_id == 200
+
+
+# ---------------------------------------------------------------------------
+# 11. RoomSession.connect must resolve a SHORT room id to the REAL id
+#     via bili_client.get_room_init before constructing the DanmakuClient.
+#     ccShield's proven RoomManager does this via resolve_room_id; without
+#     it, B站 rejects the AUTH frame and "no danmaku" loads.
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_resolves_short_id_to_real_via_bili_init() -> None:
+    """Given a short room id, ``connect`` must look up the real id via
+    ``bili_client.get_room_init`` and pass the resolved id — not the
+    input — to the underlying DanmakuClient.
+    """
+    bili = cast("BilibiliClient", _StubBiliWithInit())
+    bili.get_room_init = AsyncMock(
+        return_value={"room_id": 99999, "short_id": 42, "uid": 7}
+    )
+
+    sess = RoomSession(bili_client=bili)
+
+    with patch_real_dc():
+        ok = await sess.connect(42)  # input is the SHORT id
+
+    assert ok is True
+    bili.get_room_init.assert_awaited_once_with(42)
+    assert len(FakeDanmakuClient.instances) == 1
+    inst = FakeDanmakuClient.instances[0]
+    # The DanmakuClient must have been constructed with the REAL id.
+    assert inst.room_id == 99999, (
+        f"DanmakuClient must receive resolved real room id 99999, "
+        f"got {inst.room_id}"
+    )
+    # And sess.room_id surfaces the resolved id, not the input.
+    assert sess.room_id == 99999
+
+
+async def test_connect_falls_back_to_input_room_id_when_resolve_fails() -> None:
+    """If ``get_room_init`` is unavailable (stub bili, network error), the
+    existing input id is used as-is — preserves backward-compatibility
+    with the unit tests that don't stub the bili client.
+    """
+    sess = RoomSession(bili_client=_stub_bili())  # no get_room_init
+
+    with patch_real_dc():
+        ok = await sess.connect(22210347)
+
+    assert ok is True
+    inst = FakeDanmakuClient.instances[0]
+    assert inst.room_id == 22210347  # untouched — no resolver call possible
+    assert sess.room_id == 22210347
 
 
 # ---------------------------------------------------------------------------

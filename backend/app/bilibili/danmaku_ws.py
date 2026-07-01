@@ -55,6 +55,7 @@ from websockets.exceptions import ConnectionClosed
 
 from app.bilibili.protocol import (
     AUTH,
+    BROTLI,
     HEARTBEAT,
     pack_data,
     unpack_data,
@@ -137,6 +138,12 @@ class DanmakuClient:
             auth rejection, missing danmu-info, or no connection within
             ``_auth_timeout`` seconds.
         """
+        logger.info(
+            "danmaku_ws: start() called room={} timeout={}s hb={}s",
+            self.room_id,
+            self._auth_timeout,
+            self._heartbeat_interval,
+        )
         danmu_info = await self._fetch_danmu_info()
         if danmu_info is None:
             logger.error("danmaku_ws: get_danmu_info failed room={}", self.room_id)
@@ -145,13 +152,25 @@ class DanmakuClient:
         token = danmu_info.get("token")
         host_list = danmu_info.get("host_list") or []
         if not token or not host_list:
-            logger.error("danmaku_ws: missing token/hosts room={}", self.room_id)
+            logger.error(
+                "danmaku_ws: missing token/hosts room={} token={} hosts={}",
+                self.room_id,
+                bool(token),
+                len(host_list),
+            )
             return False
         self._token = token
 
         # Single-connection: take only the first host.
         host = host_list[0]
         ws_url = f"wss://{host['host']}:{host['wss_port']}/sub"
+        logger.info(
+            "danmaku_ws: danmu_info ok room={} token_len={} hosts={} url={}",
+            self.room_id,
+            len(token),
+            len(host_list),
+            ws_url,
+        )
 
         self.uid = await self._fetch_uid()
 
@@ -357,21 +376,52 @@ class DanmakuClient:
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        packet = pack_data(body, AUTH)
+        # Match ccShield's proven impl: pack AUTH with protover=3 (BROTLI).
+        # B站 expects the AUTH frame's header protover to match the session's
+        # declared compression; sending protover=1 here was a known cause
+        # of "no danmaku after connect" — auth silently accepted by B站 but
+        # subsequent NORMAL frames refused.
+        packet = pack_data(body, AUTH, proto_ver=BROTLI)
 
+        logger.info(
+            "danmaku_ws: sending AUTH room={} uid={} protover=3 platform=web "
+            "key_len={}",
+            self.room_id,
+            self.uid,
+            len(self._token),
+        )
         await ws.send(packet)  # type: ignore[attr-defined]
         try:
             resp = await ws.recv()  # type: ignore[attr-defined]
-        except ConnectionClosed:
+        except ConnectionClosed as exc:
+            logger.warning(
+                "danmaku_ws: AUTH ws closed during recv room={} code={}",
+                self.room_id,
+                exc.code,
+            )
             return False, False
 
         for msg in unpack_data(resp):
             code = msg.get("code")
             if code == 0:
+                logger.info(
+                    "danmaku_ws: AUTH_RSP code=0 room={} (auth ok)",
+                    self.room_id,
+                )
                 return True, False
             if isinstance(code, int):
+                logger.error(
+                    "danmaku_ws: AUTH_RSP code={} room={} msg={} (fatal)",
+                    code,
+                    self.room_id,
+                    msg.get("msg") or msg.get("message"),
+                )
                 return False, True
         # No AUTH_RSP-decoded message (e.g. an unrelated frame arrived).
+        logger.warning(
+            "danmaku_ws: no AUTH_RSP in first recv room={} (recoverable)",
+            self.room_id,
+        )
         return False, False
 
     async def _run_session(self, ws: WebSocketLike) -> None:
@@ -426,6 +476,7 @@ class DanmakuClient:
         signal). All other messages are enqueued (drop + warn on
         ``QueueFull``). ConnectionClosed terminates the loop.
         """
+        frame_count = 0
         while self.running:
             try:
                 data = await ws.recv()  # type: ignore[attr-defined]
@@ -439,6 +490,20 @@ class DanmakuClient:
 
             if not isinstance(data, (bytes, bytearray)):
                 continue
+
+            frame_count += 1
+            if frame_count == 1:
+                logger.info(
+                    "danmaku_ws: first frame received room={} bytes={}",
+                    self.room_id,
+                    len(data),
+                )
+            elif frame_count % 500 == 0:
+                logger.info(
+                    "danmaku_ws: frames_received={} room={}",
+                    frame_count,
+                    self.room_id,
+                )
 
             try:
                 messages = unpack_data(bytes(data))
@@ -474,11 +539,31 @@ class DanmakuClient:
     async def _process_queue(self) -> None:
         """Single consumer that dispatches queue messages to ``on_message``."""
         assert self.msg_queue is not None
+        processed = 0
+        cmd_counts: dict[str, int] = {}
         while self.running:
             try:
                 msg = await self.msg_queue.get()
             except asyncio.CancelledError:
                 return
+            cmd = msg.get("cmd") if isinstance(msg, dict) else None
+            cmd_key = cmd if isinstance(cmd, str) else "<non-str>"
+            cmd_counts[cmd_key] = cmd_counts.get(cmd_key, 0) + 1
+            processed += 1
+            if processed == 1:
+                logger.info(
+                    "danmaku_ws: first message dispatched cmd={} room={}",
+                    cmd_key,
+                    self.room_id,
+                )
+            elif processed % 200 == 0:
+                top = sorted(cmd_counts.items(), key=lambda kv: -kv[1])[:5]
+                logger.info(
+                    "danmaku_ws: processed={} room={} top_cmds={}",
+                    processed,
+                    self.room_id,
+                    top,
+                )
             try:
                 if self.on_message is not None:
                     await self.on_message(msg)
@@ -490,6 +575,13 @@ class DanmakuClient:
                 )
             finally:
                 self.msg_queue.task_done()
+        if cmd_counts:
+            logger.info(
+                "danmaku_ws: queue consumer exit room={} processed={} cmds={}",
+                self.room_id,
+                processed,
+                cmd_counts,
+            )
 
     # -----------------------------------------------------------------------
     # Helpers

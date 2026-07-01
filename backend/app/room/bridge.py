@@ -172,7 +172,20 @@ class RoomBridge:
         # 3. Fan out. ``asyncio.gather`` parallelises the writes; a
         #    failure on one peer does not block the others.
         if not targets:
+            logger.debug(
+                "RoomBridge._on_event: no ws clients registered room={} "
+                "type={}",
+                self._room_session.room_id,
+                event.type,
+            )
             return
+
+        logger.debug(
+            "RoomBridge._on_event: broadcasting type={} room={} clients={}",
+            event.type,
+            self._room_session.room_id,
+            len(targets),
+        )
 
         payload: dict[str, object] = event.model_dump()
 
@@ -191,6 +204,10 @@ class RoomBridge:
         )
         dead: list[WebSocket] = [t for t in results if t is not None]
         if dead:
+            logger.warning(
+                "RoomBridge._on_event: dropping {} dead ws clients",
+                len(dead),
+            )
             async with self._register_lock:
                 for ws in dead:
                     self._clients.discard(ws)

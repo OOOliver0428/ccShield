@@ -161,6 +161,15 @@ def is_auth_frame(raw: bytes) -> bool:
     return pt == proto.AUTH
 
 
+def auth_frame_proto_ver(raw: bytes) -> int:
+    """Return the protover field from an AUTH frame header."""
+    if len(raw) < 16:
+        return -1
+    _total, _h, pv, pt, _seq = struct.unpack(">IHHII", raw[:16])
+    assert pt == proto.AUTH, f"frame is not AUTH (got pt={pt})"
+    return pv
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — start() success path.
 # ---------------------------------------------------------------------------
@@ -213,6 +222,123 @@ async def test_start_success_forwards_danmaku_to_on_message() -> None:
     danmu_msgs = [m for m in received if m.get("cmd") == "DANMU_MSG"]
     assert len(danmu_msgs) >= 1, received
     assert danmu_msgs[0].get("dm_v2") == "hello-1"
+
+    await asyncio.wait_for(client.stop(), timeout=6.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 1b — AUTH frame must use protover=3 (BROTLI), matching ccShield
+# and the B站 protocol spec. Mismatched protover historically caused
+# silent auth failures → "no danmaku" after connect.
+# ---------------------------------------------------------------------------
+
+
+async def test_auth_frame_uses_brotli_protover_3() -> None:
+    """The AUTH frame sent to the WS must carry ``protover=3`` (BROTLI).
+
+    ccShield's proven implementation packs AUTH with ``PROTOCOL_VERSION = 3``;
+    reccshield had defaulted to RAW (1). B站 may accept either, but
+    matching ccShield reduces surface area for "no danmaku after connect"
+    bugs that proved elusive to debug.
+    """
+    bili = make_bili_client(user_info={"mid": 1})
+    fakes: list[FakeWebSocket] = []
+
+    async def fake_connect(_url: str, **_kw: Any) -> FakeWebSocket:
+        ws = FakeWebSocket(recv_frames=[pack_auth_rsp(0)])
+        fakes.append(ws)
+        return ws
+
+    received: list[dict[str, Any]] = []
+
+    async def on_msg(msg: dict[str, Any]) -> None:
+        received.append(msg)
+
+    with (
+        patch("app.bilibili.danmaku_ws.websockets.connect", new=fake_connect),
+        patch("app.bilibili.danmaku_ws.asyncio.sleep", new=_yield_sleep),
+    ):
+        from app.bilibili.danmaku_ws import DanmakuClient
+
+        client = DanmakuClient(
+            room_id=22210347,
+            bili_client=bili,
+            on_message=on_msg,
+            _auth_timeout=2.0,
+            _heartbeat_interval=999.0,
+            _watchdog_timeout=999.0,
+            _reconnect_delays=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+        ok = await asyncio.wait_for(client.start(), timeout=2.0)
+
+    assert ok is True
+    auth_frames = [s for s in fakes[0].sent if is_auth_frame(s)]
+    assert len(auth_frames) == 1, fakes[0].sent
+    assert auth_frame_proto_ver(auth_frames[0]) == proto.BROTLI, (
+        f"AUTH frame protover must be BROTLI(3); got {auth_frame_proto_ver(auth_frames[0])}"
+    )
+
+    await asyncio.wait_for(client.stop(), timeout=6.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 1c — DanmakuClient must accept and use a real-room-id passed by
+# the parent (RoomSession.connect resolves short→real via bili_client).
+# ---------------------------------------------------------------------------
+
+
+async def test_start_uses_provided_real_room_id_in_auth_payload() -> None:
+    """The AUTH body must carry the real room id the caller passed in.
+
+    ccShield's DanmakuClient is constructed with the resolved room id
+    (after ``resolve_room_id``), and its AUTH frame's ``roomid`` field
+    uses that id. ``RoomSession.connect`` is responsible for resolving;
+    this test pins the DanmakuClient contract on what it receives.
+    """
+    bili = make_bili_client(user_info={"mid": 1})
+    captured_bodies: list[dict[str, Any]] = []
+    fakes: list[FakeWebSocket] = []
+
+    async def fake_connect(_url: str, **_kw: Any) -> FakeWebSocket:
+        ws = FakeWebSocket(recv_frames=[pack_auth_rsp(0)])
+        fakes.append(ws)
+        return ws
+
+    def grab_auth_body(raw: bytes) -> None:
+        if not is_auth_frame(raw):
+            return
+        body = raw[16:]  # payload after 16-byte header
+        captured_bodies.append(json.loads(body.decode("utf-8")))
+
+    with (
+        patch("app.bilibili.danmaku_ws.websockets.connect", new=fake_connect),
+        patch("app.bilibili.danmaku_ws.asyncio.sleep", new=_yield_sleep),
+    ):
+        from app.bilibili.danmaku_ws import DanmakuClient
+
+        client = DanmakuClient(
+            room_id=22210347,  # the resolved real id, not a short id
+            bili_client=bili,
+            on_message=AsyncMock(),
+            _auth_timeout=2.0,
+            _heartbeat_interval=999.0,
+            _watchdog_timeout=999.0,
+            _reconnect_delays=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+        ok = await asyncio.wait_for(client.start(), timeout=2.0)
+
+    assert ok is True
+    for sent in fakes[0].sent:
+        grab_auth_body(sent)
+
+    assert len(captured_bodies) == 1
+    auth_body = captured_bodies[0]
+    assert auth_body["roomid"] == 22210347
+    assert auth_body["uid"] == 1
+    assert auth_body["protover"] == 3
+    assert auth_body["platform"] == "web"
+    assert auth_body["type"] == 2
+    assert auth_body["key"] == "tok-abc"
 
     await asyncio.wait_for(client.stop(), timeout=6.0)
 

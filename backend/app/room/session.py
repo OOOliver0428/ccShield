@@ -34,7 +34,7 @@ import asyncio
 import contextlib
 from collections import deque
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from loguru import logger
 
@@ -98,19 +98,36 @@ class RoomSession:
     async def connect(self, room_id: int) -> bool:
         """Connect to ``room_id``. Single-active-room: stops any previous.
 
+        The input may be a SHORT room id (URL-style) or the REAL id; we
+        resolve via :meth:`BilibiliClient.get_room_init` before
+        constructing the underlying ``DanmakuClient``. Without this
+        step, B站 rejects the AUTH frame on real-room-id mismatch and
+        no danmaku loads. If resolution fails (stub bili_client / no
+        network) the input id is used as-is and a warning is logged.
+        Defensive fallback keeps every existing unit test green.
+
         Returns ``True`` if ``DanmakuClient.start()`` reports a
         connected WS; ``False`` otherwise. The status flips to
         ``"connected"`` or ``"error"`` accordingly and a
         :class:`RoomStatusEvent` is broadcast to every registered
         callback.
         """
+        logger.info("room_session.connect: input room_id={}", room_id)
+
         # Single-active-room invariant: stop any previous client.
         if self._client is not None:
             await self._client.stop()
             self._client = None
 
+        # Resolve short→real room id. The B站 ``getDanmuInfo`` and AUTH
+        # frames both require the real id; ccShield's proven RoomManager
+        # does this via ``resolve_room_id``; here we call the lower-level
+        # ``get_room_init`` so a network outage in this optional step
+        # doesn't take down the WS connect.
+        real_room_id = await self._resolve_room_id(room_id)
+
         client = DanmakuClient(
-            room_id,
+            real_room_id,
             self.bili_client,
             on_message=self._on_raw_message,
         )
@@ -118,8 +135,13 @@ class RoomSession:
 
         ok = await client.start()
         if ok:
-            self.room_id = room_id
+            self.room_id = real_room_id
             self.status = "connected"
+            logger.info(
+                "room_session.connect: connected room={} (input={})",
+                real_room_id,
+                room_id,
+            )
             await self._broadcast(
                 RoomStatusEvent(type="room_status", status="connected")
             )
@@ -130,10 +152,68 @@ class RoomSession:
         self.room_id = None
         self._client = None
         self.status = "error"
+        logger.error(
+            "room_session.connect: start() returned False room={} input={}",
+            real_room_id,
+            room_id,
+        )
         await self._broadcast(
             RoomStatusEvent(type="room_status", status="error")
         )
         return False
+
+    async def _resolve_room_id(self, room_id: int) -> int:
+        """Best-effort short→real translation via ``bili_client.get_room_init``.
+
+        Returns the resolved real id when the bili client has the method
+        and it returns a ``room_id``; otherwise returns ``room_id``
+        unchanged. Never raises — unit tests and prod partial outages
+        both flow through this path.
+        """
+        init_callable = getattr(self.bili_client, "get_room_init", None)
+        if not callable(init_callable):
+            logger.debug(
+                "room_session: bili_client has no get_room_init, "
+                "using input room_id={}",
+                room_id,
+            )
+            return room_id
+        # Cast: basedpyright sees ``object`` from getattr; runtime is an
+        # AsyncMock in tests and the real coroutine in production.
+        init_coro = cast(
+            "Callable[[int], Awaitable[dict[str, object] | None]]",
+            init_callable,
+        )
+        try:
+            data = await init_coro(room_id)
+        except Exception as exc:
+            logger.warning(
+                "room_session: get_room_init raised, using input room_id={} "
+                "err={!r}",
+                room_id,
+                exc,
+            )
+            return room_id
+        if not isinstance(data, dict):
+            logger.warning(
+                "room_session: get_room_init non-dict, using input room_id={}",
+                room_id,
+            )
+            return room_id
+        resolved = data.get("room_id")
+        if isinstance(resolved, int) and resolved:
+            if resolved != room_id:
+                logger.info(
+                    "room_session: resolved short_id={} -> real_id={}",
+                    room_id,
+                    resolved,
+                )
+            return resolved
+        logger.warning(
+            "room_session: get_room_init missing room_id, using input={}",
+            room_id,
+        )
+        return room_id
 
     async def disconnect(self) -> None:
         """Stop the current client and reset state. No-op if not connected."""
@@ -330,6 +410,14 @@ class RoomSession:
         """Snapshot callbacks under lock, then await each (errors logged)."""
         async with self._callback_lock:
             snapshot = list(self._callbacks)
+
+        if not snapshot:
+            logger.debug(
+                "room_session: broadcast with 0 callbacks room={} type={}",
+                self.room_id,
+                event.type,
+            )
+            return
 
         for cb in snapshot:
             try:
