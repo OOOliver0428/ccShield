@@ -237,6 +237,18 @@ class AuthSession:
         if buvid3 is not None:
             settings.BUVID3 = buvid3
 
+        # Refresh the long-lived ``bili_client``'s httpx cookie jar BEFORE
+        # firing ``/nav``. The singleton was constructed at module-import
+        # time when ``.env`` was empty, so its cookie jar is empty until
+        # we push the freshly-captured cookies in. Without this refresh
+        # ``/nav`` still sees an empty jar, returns ``-101``, and the
+        # state machine lands in EXPIRED even though the user just
+        # successfully logged in. See a.log for the runtime-confirmed
+        # symptom.
+        update_cookies = getattr(self._bili_client, "update_cookies", None)
+        if callable(update_cookies):
+            update_cookies(dict(settings.cookies))
+
         return await self.check_on_startup()
 
     def _resolve_cookies(self) -> tuple[str, str]:

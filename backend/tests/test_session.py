@@ -1,7 +1,5 @@
 """TDD tests for AuthSession state machine (app.auth.session — T7).
 
-Contract under test:
-
 - AuthState enum: AUTHENTICATED, NEEDS_LOGIN, EXPIRED.
 - AuthSession.check_on_startup()
     * SESSDATA / BILI_JCT both empty → state == NEEDS_LOGIN; get_user_info NOT called.
@@ -29,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -427,3 +425,120 @@ def test_module_level_singleton_is_auth_session_instance() -> None:
 
     assert isinstance(singleton, AuthSession)
     assert singleton.state == AuthState.NEEDS_LOGIN
+
+
+# ---------------------------------------------------------------------------
+# mark_authenticated_after_login — hot-reload the bili_client cookie jar
+# ---------------------------------------------------------------------------
+#
+# Bug fix: after a successful QR / manual login, the long-lived
+# ``BilibiliClient`` singleton's httpx cookie jar MUST be refreshed
+# before ``check_on_startup`` fires ``/nav`` — otherwise the jar still
+# carries the import-time empty cookies, ``/nav`` returns ``-101``, and
+# the state machine ends up in EXPIRED even though the cookies on disk
+# are fresh.
+
+
+def test_mark_authenticated_after_login_refreshes_bili_client_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_authenticated_after_login must push the new cookies into the
+    long-lived ``bili_client`` BEFORE firing ``/nav`` via
+    ``check_on_startup``.
+
+    Mock contract: the mock's ``get_user_info`` returns the user record
+    ONLY after asserting ``update_cookies`` was already called with the
+    new SESSDATA / bili_jct — i.e. if ``update_cookies`` was NOT called
+    (or was called with the wrong values), the assertion fires and the
+    test naturally fails.
+    """
+    import os
+    from pathlib import Path
+
+    saved = {k: os.environ.pop(k, None) for k in ("SESSDATA", "BILI_JCT", "BUVID3")}
+
+    try:
+        from app.config import Settings
+
+        abs_env = Path("/tmp/reccshield_test_mark_login.env")
+        if abs_env.exists():
+            abs_env.unlink()
+        fresh = Settings(_env_file=str(abs_env))  # pyright: ignore[reportCallIssue]
+
+        import app.config as config_module
+
+        monkeypatch.setattr(config_module, "settings", fresh)
+
+        bili = MagicMock(spec=["get_user_info", "update_cookies"])
+
+        async def _nav_after_refresh() -> dict[str, Any]:
+            assert bili.update_cookies.call_count >= 1
+            last_call = bili.update_cookies.call_args
+            assert last_call is not None
+            passed_cookies: dict[str, str] = dict(last_call.args[0])
+            assert passed_cookies.get("SESSDATA") == "fresh-sess"
+            assert passed_cookies.get("bili_jct") == "fresh-jct"
+            return {"uname": "U", "mid": 1, "isLogin": True}
+
+        bili.get_user_info = AsyncMock(side_effect=_nav_after_refresh)
+        bili.update_cookies = MagicMock(return_value=None)
+
+        session = AuthSession(bili)
+
+        state = run(
+            session.mark_authenticated_after_login(
+                sessdata="fresh-sess",
+                bili_jct="fresh-jct",
+                buvid3="fresh-buv",
+            )
+        )
+
+        assert state == AuthState.AUTHENTICATED
+        bili.update_cookies.assert_called()
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
+def test_mark_authenticated_after_login_returns_authenticated_when_nav_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Happy path: jar refresh + nav returns user record → AUTHENTICATED."""
+    import os
+    from pathlib import Path
+
+    saved = {k: os.environ.pop(k, None) for k in ("SESSDATA", "BILI_JCT", "BUVID3")}
+
+    try:
+        from app.config import Settings
+
+        abs_env = Path("/tmp/reccshield_test_mark_login2.env")
+        if abs_env.exists():
+            abs_env.unlink()
+        fresh = Settings(_env_file=str(abs_env))  # pyright: ignore[reportCallIssue]
+
+        import app.config as config_module
+
+        monkeypatch.setattr(config_module, "settings", fresh)
+
+        bili = MagicMock(spec=["get_user_info", "update_cookies"])
+        bili.get_user_info = AsyncMock(
+            return_value={"uname": "U", "mid": 99, "isLogin": True}
+        )
+        bili.update_cookies = MagicMock(return_value=None)
+
+        session = AuthSession(bili)
+
+        state = run(
+            session.mark_authenticated_after_login(
+                sessdata="new-s", bili_jct="new-j", buvid3=None
+            )
+        )
+
+        assert state == AuthState.AUTHENTICATED
+        bili.update_cookies.assert_called_once()
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v

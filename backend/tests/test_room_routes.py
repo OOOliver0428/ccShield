@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -667,6 +667,78 @@ def test_bare_ws_path_without_token_returns_401(
         headers={"Host": "localhost"},
     )
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# _get_bili_client — refresh the singleton's cookie jar from settings
+# ---------------------------------------------------------------------------
+#
+# Bug fix: the room-routes singleton ``_get_bili_client`` may have been
+# created BEFORE a QR / manual login mutated ``settings.cookies`` in
+# place. Each access must refresh the jar from current settings so the
+# route's downstream B站 calls (e.g. ``resolve_room_id``) carry the
+# freshly-captured credentials.
+
+
+def test_get_bili_client_refreshes_cookies_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First access to ``_get_bili_client`` must call ``update_cookies``
+    with the current ``settings.cookies`` snapshot, so the long-lived
+    client carries the freshly-captured credentials even if it was
+    constructed earlier in the process (e.g. at import time with an
+    empty ``.env``).
+    """
+    from app.api import room_routes
+    from app.config import settings as real_settings
+
+    room_routes._bili_client = None  # reset singleton
+
+    fake_client = MagicMock(spec=["update_cookies", "resolve_room_id"])
+    fake_client.update_cookies = MagicMock(return_value=None)
+
+    bili_ctor_calls: list[dict[str, str] | None] = []
+
+    def _fake_bili_client(*, cookies: dict[str, str] | None = None, **_kwargs: object) -> MagicMock:
+        bili_ctor_calls.append(cookies)
+        return fake_client
+
+    monkeypatch.setattr(room_routes, "BilibiliClient", _fake_bili_client)
+
+    resolved = room_routes._get_bili_client()
+
+    assert resolved is fake_client
+    fake_client.update_cookies.assert_called_once_with(dict(real_settings.cookies))
+    # Subsequent access reuses the singleton and does NOT re-call the ctor.
+    bili_ctor_calls.clear()
+    resolved2 = room_routes._get_bili_client()
+    assert resolved2 is fake_client
+    assert bili_ctor_calls == []
+
+
+def test_get_bili_client_subsequent_calls_also_refresh_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every ``_get_bili_client()`` access must refresh the jar — cookies
+    may have been mutated in place between calls (e.g. after the QR
+    poll handler wrote the fresh credentials)."""
+    from app.api import room_routes
+
+    room_routes._bili_client = None
+
+    fake_client = MagicMock(spec=["update_cookies"])
+    fake_client.update_cookies = MagicMock(return_value=None)
+
+    def _ctor(**_kwargs: object) -> MagicMock:
+        return fake_client
+
+    monkeypatch.setattr(room_routes, "BilibiliClient", _ctor)
+
+    room_routes._get_bili_client()
+    room_routes._get_bili_client()
+    room_routes._get_bili_client()
+
+    assert fake_client.update_cookies.call_count == 3
 
 
 # ---------------------------------------------------------------------------

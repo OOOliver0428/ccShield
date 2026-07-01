@@ -109,6 +109,82 @@ def test_close_closes_injected_client() -> None:
 
 
 # ---------------------------------------------------------------------------
+# update_cookies — refresh the underlying httpx cookie jar in place
+# ---------------------------------------------------------------------------
+#
+# Bug fix: the long-lived ``BilibiliClient`` singleton is constructed at
+# module-import time when ``.env`` is empty, so its httpx cookie jar is
+# empty. After a successful QR / manual login mutates ``settings`` in
+# place, the existing client's jar must be refreshed without rebuilding
+# the whole client (which would discard the keep-alive connection pool).
+# ``update_cookies`` pushes the new cookies into both the underlying
+# ``httpx.AsyncClient.cookies`` jar AND the in-memory ``_cookies`` mirror.
+
+
+def test_update_cookies_sets_sessdata_in_underlying_httpx_jar() -> None:
+    """After update_cookies, the httpx client's jar exposes the new SESSDATA."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": -101, "message": "x"})
+
+    client = make_client(handler)
+    # Pre-condition: no SESSDATA in the jar.
+    assert client.http.cookies.get("SESSDATA") is None
+
+    client.update_cookies({"SESSDATA": "new", "bili_jct": "jct-new"})
+
+    assert client.http.cookies.get("SESSDATA") == "new"
+    assert client.http.cookies.get("bili_jct") == "jct-new"
+
+
+def test_update_cookies_overwrites_existing_values() -> None:
+    """update_cookies REPLACES entries that share a key (per-cookie upsert)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": -101, "message": "x"})
+
+    client = make_client(handler)
+    client.update_cookies({"SESSDATA": "first"})
+    assert client.http.cookies.get("SESSDATA") == "first"
+
+    client.update_cookies({"SESSDATA": "second"})
+    assert client.http.cookies.get("SESSDATA") == "second"
+
+
+def test_update_cookies_updates_internal_mirror() -> None:
+    """The internal ``_cookies`` mirror must also reflect the new values."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": -101, "message": "x"})
+
+    client = make_client(handler)
+    client.update_cookies({"SESSDATA": "mirror-check"})
+    assert client._cookies.get("SESSDATA") == "mirror-check"
+
+
+def test_update_cookies_preserves_unrelated_keys() -> None:
+    """Updating one cookie must not erase a different cookie that was set earlier."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": -101, "message": "x"})
+
+    client = make_client(handler)
+    client.update_cookies({"SESSDATA": "a", "bili_jct": "j", "buvid3": "b"})
+    # Re-update with only SESSDATA — bili_jct and buvid3 must survive.
+    client.update_cookies({"SESSDATA": "a2"})
+    assert client.http.cookies.get("bili_jct") == "j"
+    assert client.http.cookies.get("buvid3") == "b"
+    assert client.http.cookies.get("SESSDATA") == "a2"
+
+
+def test_update_cookies_with_empty_dict_is_noop() -> None:
+    """Empty dict must not raise; it just keeps the current state."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": -101, "message": "x"})
+
+    client = make_client(handler)
+    client.update_cookies({"SESSDATA": "kept"})
+    client.update_cookies({})
+    assert client.http.cookies.get("SESSDATA") == "kept"
+
+
+# ---------------------------------------------------------------------------
 # get_room_init / get_room_info / resolve_room_id
 # ---------------------------------------------------------------------------
 

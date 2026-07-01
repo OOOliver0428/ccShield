@@ -71,10 +71,21 @@ def _get_bili_client() -> BilibiliClient:
     The module stays importable before auth is configured — a test or
     a misconfigured prod can override ``_get_bili_client`` on this
     module without paying the cost of a real ``httpx.AsyncClient``.
+
+    The singleton's httpx cookie jar is refreshed from
+    :data:`app.config.settings` on EVERY access, not just at first
+    construction. The client may have been built when ``.env`` was
+    empty (cold start) and a subsequent QR / manual login mutated
+    ``settings`` in place; without the refresh, downstream B站 calls
+    (e.g. ``resolve_room_id``) would carry an empty jar and fail.
     """
     global _bili_client
     if _bili_client is None:
         _bili_client = BilibiliClient()
+    # Push the latest settings into the jar (idempotent dict upsert).
+    from app.config import settings
+
+    _bili_client.update_cookies(dict(settings.cookies))
     return _bili_client
 
 

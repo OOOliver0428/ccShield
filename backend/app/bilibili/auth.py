@@ -253,6 +253,22 @@ def _capture_success_cookies(response: httpx.Response) -> dict[str, str]:
         dede_src="Set-Cookie" if _cookie_value(response, "DedeUserID") else "data.url",
     )
 
+    # Masked-value diagnostic: confirms the captured cookies are real
+    # non-empty strings (rather than the historical "" empty case that
+    # drove the EXPIRED-state bug). First 6 chars + length — never the
+    # full secret.
+    def _mask(value: str) -> str:
+        if not value:
+            return "<empty>"
+        return f"{value[:6]}... (len={len(value)})"
+
+    logger.info(
+        "captured sessdata={} bili_jct={} dede_user_id={}",
+        _mask(sessdata),
+        _mask(bili_jct),
+        _mask(dede_user_id),
+    )
+
     return {
         "sessdata": sessdata,
         "bili_jct": bili_jct,

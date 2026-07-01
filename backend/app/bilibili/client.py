@@ -190,6 +190,26 @@ class BilibiliClient:
         """
         await self._client.aclose()
 
+    def update_cookies(self, cookies: dict[str, str]) -> None:
+        """Refresh the underlying httpx cookie jar in place.
+
+        The process-wide ``BilibiliClient`` is constructed at module-import
+        time when ``.env`` is typically empty, so its httpx cookie jar is
+        empty. After a successful QR / manual login mutates
+        ``app.config.settings`` in place, the existing client's jar MUST
+        be refreshed — rebuilding the client would discard the keep-alive
+        connection pool and re-open TCP connections.
+
+        Per-cookie upsert: entries that share a key are replaced, others
+        are preserved (httpx ``Cookies.update`` semantics).
+
+        Args:
+            cookies: cookie name → value pairs to push into the jar. Empty
+                dict is a no-op (the current state is left intact).
+        """
+        self._client.cookies.update(cookies)
+        self._cookies = dict(cookies) if cookies else dict(self._cookies)
+
     # -----------------------------------------------------------------------
     # Read APIs
     # -----------------------------------------------------------------------
