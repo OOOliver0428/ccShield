@@ -143,8 +143,12 @@ def test_qr_generate_raises_when_data_missing() -> None:
 
 
 def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
-    """Legacy path: B站 code 0 + url with SESSDATA/bili_jct/DedeUserID
-    query params and no Set-Cookie → return them as the success dict."""
+    """Legacy path: B站 inner_code 0 + url with SESSDATA/bili_jct/DedeUserID
+    query params and no Set-Cookie → return them as the success dict.
+
+    Note the B站 dual-code structure: the top-level envelope ``code`` is
+    always 0; the QR-login state code lives in ``data.code``. The poll
+    MUST dispatch on ``data.code``, not the top-level field."""
 
     success_url = (
         "https://passport.biligame.com/x/passport-login/web/crossDomain"
@@ -158,7 +162,14 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
         assert request.url.params.get("qrcode_key") == "fake_qr_key_123"
         return httpx.Response(
             200,
-            json={"code": 0, "data": {"url": success_url, "refresh_token": "rt"}},
+            json={
+                "code": 0,
+                "data": {
+                    "code": 0,  # inner B站 QR-login state code: SUCCESS
+                    "url": success_url,
+                    "refresh_token": "rt",
+                },
+            },
         )
 
     client = make_async_client(handler)
@@ -182,7 +193,9 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
 
 def test_qr_poll_success_captures_cookies_from_set_cookie_when_url_missing() -> None:
     """Bug A core scenario (from a.log): Set-Cookie carries all three
-    cookies, ``data.url`` is absent. Must return a success dict."""
+    cookies, ``data.url`` is absent. Must return a success dict.
+
+    Inner B站 data.code == 0 → success; cookies come from Set-Cookie."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -192,7 +205,10 @@ def test_qr_poll_success_captures_cookies_from_set_cookie_when_url_missing() -> 
                 ("Set-Cookie", "bili_jct=fake_jct_from_header; Path=/; HttpOnly"),
                 ("Set-Cookie", "DedeUserID=99999; Path=/; HttpOnly"),
             ],
-            json={"code": 0, "data": {"refresh_token": "rt"}},  # no url field
+            json={
+                "code": 0,
+                "data": {"code": 0, "refresh_token": "rt"},  # no url field
+            },
         )
 
     client = make_async_client(handler)
@@ -221,7 +237,14 @@ def test_qr_poll_success_merges_set_cookie_and_data_url() -> None:
                 ("Set-Cookie", "bili_jct=fake_jct_from_cookie; Path=/; HttpOnly"),
                 ("Set-Cookie", "DedeUserID=cookie_dede; Path=/; HttpOnly"),
             ],
-            json={"code": 0, "data": {"url": url_partial, "refresh_token": "rt"}},
+            json={
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "url": url_partial,
+                    "refresh_token": "rt",
+                },
+            },
         )
 
     client = make_async_client(handler)
@@ -254,7 +277,14 @@ def test_qr_poll_success_falls_back_to_set_cookie_for_bili_jct() -> None:
         return httpx.Response(
             200,
             headers=[("Set-Cookie", "bili_jct=fake_jct_from_cookie; Path=/; HttpOnly")],
-            json={"code": 0, "data": {"url": url_without_jct, "refresh_token": "rt"}},
+            json={
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "url": url_without_jct,
+                    "refresh_token": "rt",
+                },
+            },
         )
 
     client = make_async_client(handler)
@@ -284,7 +314,14 @@ def test_qr_poll_raises_login_incomplete_when_bili_jct_missing_everywhere() -> N
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"code": 0, "data": {"url": url_no_cookies, "refresh_token": "rt"}},
+            json={
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "url": url_no_cookies,
+                    "refresh_token": "rt",
+                },
+            },
         )
 
     client = make_async_client(handler)
@@ -299,7 +336,10 @@ def test_qr_poll_raises_login_incomplete_when_no_cookies_anywhere() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"code": 0, "data": {"refresh_token": "rt"}},  # no url field
+            json={
+                "code": 0,
+                "data": {"code": 0, "refresh_token": "rt"},  # no url field
+            },
         )
 
     client = make_async_client(handler)
@@ -318,6 +358,7 @@ def test_qr_poll_raises_login_incomplete_when_sessdata_missing_everywhere() -> N
             json={
                 "code": 0,
                 "data": {
+                    "code": 0,
                     "url": (
                         "https://passport.biligame.com/x/passport-login/web/crossDomain"
                         "?DedeUserID=333&bili_jct=still_only_jct"
@@ -341,6 +382,7 @@ def test_qr_poll_raises_login_incomplete_when_sessdata_missing() -> None:
             json={
                 "code": 0,
                 "data": {
+                    "code": 0,
                     "url": (
                         "https://passport.biligame.com/x/passport-login/web/crossDomain"
                         "?DedeUserID=333&bili_jct=fake_jct_no_sess"
@@ -356,48 +398,77 @@ def test_qr_poll_raises_login_incomplete_when_sessdata_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# qr_poll — B站 poll-state codes
+# qr_poll — B站 poll-state codes (CRITICAL — these codes live in
+# ``data.code``, NOT the top-level envelope ``code``).
 # ---------------------------------------------------------------------------
 
 
-def test_qr_poll_raises_qr_expired_on_code_86038() -> None:
-    """86038 = QR code expired."""
+def test_qr_poll_raises_qr_expired_on_inner_code_86038() -> None:
+    """inner_code 86038 = QR code expired (top-level code is always 0)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 86038, "message": "expired"})
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"code": 86038, "message": "expired"},
+            },
+        )
 
     client = make_async_client(handler)
     with pytest.raises(QrExpiredError):
         run(qr_poll(client, "fake_key"))
 
 
-def test_qr_poll_raises_qr_awaiting_scan_on_code_86101() -> None:
-    """86101 = not scanned yet."""
+def test_qr_poll_raises_qr_awaiting_scan_on_inner_code_86101() -> None:
+    """inner_code 86101 = not scanned yet — root-cause regression for the
+    bug where the top-level code (always 0) was being read and the QR
+    states never matched. See a.log curl proof."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 86101, "message": "not scanned"})
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"code": 86101, "message": "未扫码"},
+            },
+        )
 
     client = make_async_client(handler)
     with pytest.raises(QrAwaitingScanError):
         run(qr_poll(client, "fake_key"))
 
 
-def test_qr_poll_raises_qr_awaiting_confirm_on_code_86090() -> None:
-    """86090 = scanned, awaiting user confirm on phone."""
+def test_qr_poll_raises_qr_awaiting_confirm_on_inner_code_86090() -> None:
+    """inner_code 86090 = scanned, awaiting user confirm on phone."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 86090, "message": "awaiting confirm"})
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"code": 86090, "message": "awaiting confirm"},
+            },
+        )
 
     client = make_async_client(handler)
     with pytest.raises(QrAwaitingConfirmError):
         run(qr_poll(client, "fake_key"))
 
 
-def test_qr_poll_raises_qr_login_error_on_unknown_code() -> None:
-    """Adversarial: B站 returns a code we don't recognise → generic QrLoginError."""
+def test_qr_poll_raises_qr_login_error_on_unknown_inner_code() -> None:
+    """Adversarial: B站 returns an inner code we don't recognise → generic
+    QrLoginError. Top-level code is always 0, so the typo guard fires on
+    ``data.code``."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 99999, "message": "wat"})
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"code": 99999, "message": "wat"},
+            },
+        )
 
     client = make_async_client(handler)
     with pytest.raises(QrLoginError):
@@ -409,6 +480,25 @@ def test_qr_poll_raises_qr_login_error_on_non_zero_no_data() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"")
+
+    client = make_async_client(handler)
+    with pytest.raises(QrLoginError):
+        run(qr_poll(client, "fake_key"))
+
+
+def test_qr_poll_raises_qr_login_error_on_top_level_code_only() -> None:
+    """Regression: previously the top-level envelope ``code`` was read for
+    the QR state match. The fixture below would have been mis-dispatched
+    as success under that bug. With the fix, the missing ``data`` object
+    triggers QrLoginError (top-level code being non-zero does not get a
+    free pass — only ``data.code`` counts)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Hand-rolled: top-level code = 86101 but no `data` block at all.
+        return httpx.Response(
+            200,
+            json={"code": 86101, "message": "malformed (test fixture)"},
+        )
 
     client = make_async_client(handler)
     with pytest.raises(QrLoginError):

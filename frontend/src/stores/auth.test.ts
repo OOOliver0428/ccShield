@@ -134,6 +134,49 @@ describe("auth store", () => {
 
       expect(store.qrPollStatus).toBe("expired");
     });
+
+    it("regression: pollOnce rejection does NOT fail startQr or clear qrcodeUrl", async () => {
+      // Backend can return non-2xx on intermediate poll states (e.g.
+      // 500-on-86101 before the data.code fix landed, or any transient
+      // network blip). startQr's initial poll is fire-and-forget — a
+      // rejection must not propagate to the caller, which would set
+      // QrLogin's startError and hide the already-rendered QR behind
+      // a "生成二维码失败" message. The setInterval owns long-term
+      // recovery; this test pins that contract.
+      let pollCalls = 0;
+      server.use(
+        http.post("*/api/auth/qr/start", () =>
+          HttpResponse.json({
+            qrcode_url: "data:image/png;base64,FAKE",
+            qrcode_key: "key-poll-fail",
+          }),
+        ),
+        http.get("*/api/auth/qr/poll", () => {
+          pollCalls += 1;
+          return HttpResponse.json(
+            { detail: "internal server error" },
+            { status: 500 },
+          );
+        }),
+      );
+
+      const store = useAuthStore();
+      // startQr must RESOLVE — never reject, regardless of what pollOnce
+      // would do — because the QR is already rendered and the interval
+      // will keep polling.
+      await expect(store.startQr()).resolves.toBeUndefined();
+
+      // The QR image is still set on the store (the failure is non-fatal).
+      expect(store.qrcodeUrl).toBe("data:image/png;base64,FAKE");
+      expect(store.qrKey).toBe("key-poll-fail");
+      // Initial scan was attempted exactly once.
+      expect(pollCalls).toBe(1);
+
+      // The interval keeps retrying: advancing time fires more polls,
+      // proving the failure didn't disable polling or stop propagation.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(pollCalls).toBeGreaterThan(1);
+    });
   });
 
   describe("loginManual", () => {

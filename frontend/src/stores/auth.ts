@@ -56,17 +56,24 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function pollOnce(): Promise<void> {
-    const response = await httpClient.get<{ status: QrPollStatus }>(
-      "/auth/qr/poll",
-      { params: { qrcode_key: qrKey.value } },
-    );
-    const next = response.data.status;
-    qrPollStatus.value = next;
-    if (next === "expired") {
-      stopPolling();
-    } else if (next === "success") {
-      stopPolling();
-      await fetchStatus();
+    try {
+      const response = await httpClient.get<{ status: QrPollStatus }>(
+        "/auth/qr/poll",
+        { params: { qrcode_key: qrKey.value } },
+      );
+      const next = response.data.status;
+      qrPollStatus.value = next;
+      if (next === "expired") {
+        stopPolling();
+      } else if (next === "success") {
+        stopPolling();
+        await fetchStatus();
+      }
+    } catch {
+      // Poll errors are non-fatal: the next interval tick will retry.
+      // Catching here keeps the long-term interval callback from
+      // leaking unhandled promise rejections and keeps startQr's
+      // fire-and-forget first poll safe.
     }
   }
 
@@ -82,6 +89,9 @@ export const useAuthStore = defineStore("auth", () => {
     pollHandle = setInterval(() => {
       void pollOnce();
     }, 2000);
+    // pollOnce swallows its own errors, so this initial poll can never
+    // reject — the QR image is rendered even on a transient poll blip,
+    // and the setInterval above keeps retrying.
     await pollOnce();
   }
 

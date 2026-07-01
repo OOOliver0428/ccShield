@@ -305,18 +305,25 @@ async def qr_generate(client: httpx.AsyncClient) -> dict[str, str]:
 async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
     """GET ``/x/passport-login/web/qrcode/poll?qrcode_key=...`` and dispatch by code.
 
+    Important: B站's poll response uses TWO separate code fields and the
+    top-level envelope ``code`` is ALWAYS ``0`` on every poll (success
+    OR an intermediate state) — the QR-login state code is in
+    ``data.code`` (86101 / 86090 / 86038 / 0). Reading the top-level
+    ``code`` produced a "success on every poll" bug that masked every
+    state transition. See a.log / b.log for the curl proof.
+
     Returns:
         A success dict ``{status, sessdata, bili_jct, dede_user_id}`` on
-        B站 code 0.
+        B站 inner code 0.
 
     Raises:
-        QrExpiredError:        code 86038 — the QR expired, regenerate.
-        QrAwaitingScanError:   code 86101 — user has not scanned yet.
-        QrAwaitingConfirmError: code 86090 — scanned, awaiting phone confirm.
-        LoginIncompleteError:   code 0 but SESSDATA / bili_jct missing
+        QrExpiredError:        inner code 86038 — the QR expired, regenerate.
+        QrAwaitingScanError:   inner code 86101 — user has not scanned yet.
+        QrAwaitingConfirmError: inner code 86090 — scanned, awaiting confirm.
+        LoginIncompleteError:   inner code 0 but SESSDATA / bili_jct missing
                                 after BOTH Set-Cookie and ``data.url`` were
                                 consulted.
-        QrLoginError:           any other non-zero code, or a malformed body.
+        QrLoginError:           any other inner code, or a malformed body.
     """
     response = await client.get(
         _QR_POLL_URL,
@@ -324,38 +331,64 @@ async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
         headers=_QR_HEADERS,
     )
     body = _parse_json_object(response.text)
-    code = body.get("code")
 
-    if code == 86101 or code == "86101":
-        raise QrAwaitingScanError()
-    if code == 86090 or code == "86090":
-        raise QrAwaitingConfirmError()
-    if code == 86038 or code == "86038":
-        raise QrExpiredError()
-
-    if code != 0 and code != "0":
+    # B站 nests the QR state code in ``data.code`` (NOT the top-level
+    # ``code`` — that is always 0). Pull it out, accepting either an int
+    # or a numeric string form (some B站 deployments serialise it as a
+    # string for historic reasons).
+    data = body.get("data")
+    if not isinstance(data, dict):
         raise QrLoginError(
-            f"qr_poll: unexpected code={code!r} message={body.get('message')!r}"
+            f"qr_poll: missing or non-object 'data' (raw code={body.get('code')!r})"
         )
+    raw_inner: object = data.get("code")
+    if isinstance(raw_inner, int):
+        inner_code: int | None = raw_inner
+    elif isinstance(raw_inner, str) and raw_inner.lstrip("-").isdigit():
+        inner_code = int(raw_inner)
+    else:
+        inner_code = None
 
-    # code == 0: success — capture cookies from BOTH Set-Cookie and
-    # ``data.url`` (Set-Cookie is primary; ``data.url`` is the legacy
-    # fallback for any cookie still missing).
-    cookies = _capture_success_cookies(response)
+    # Diagnostics: log every poll's inner code so operators can see the
+    # full 86101→86090→0 transition in production logs.
+    inner_msg: object = data.get("message")
+    logger.info(
+        "qr_poll: inner_code={inner_code} message={inner_message!r}",
+        inner_code=inner_code,
+        inner_message=inner_msg if isinstance(inner_msg, str) else "",
+    )
 
-    if not cookies["bili_jct"]:
-        raise LoginIncompleteError(
-            "qr_poll: success but bili_jct missing from BOTH url and Set-Cookie"
-        )
-    if not cookies["sessdata"]:
-        raise LoginIncompleteError("qr_poll: success but SESSDATA missing")
+    if inner_code == 86101:
+        raise QrAwaitingScanError()
+    if inner_code == 86090:
+        raise QrAwaitingConfirmError()
+    if inner_code == 86038:
+        raise QrExpiredError()
+    if inner_code == 0:
+        # success path — capture cookies from BOTH Set-Cookie and
+        # ``data.url`` (Set-Cookie is primary; ``data.url`` is the legacy
+        # fallback for any cookie still missing).
+        cookies = _capture_success_cookies(response)
 
-    return {
-        "status": "success",
-        "sessdata": cookies["sessdata"],
-        "bili_jct": cookies["bili_jct"],
-        "dede_user_id": cookies["dede_user_id"],
-    }
+        if not cookies["bili_jct"]:
+            raise LoginIncompleteError(
+                "qr_poll: success but bili_jct missing from BOTH url and Set-Cookie"
+            )
+        if not cookies["sessdata"]:
+            raise LoginIncompleteError("qr_poll: success but SESSDATA missing")
+
+        return {
+            "status": "success",
+            "sessdata": cookies["sessdata"],
+            "bili_jct": cookies["bili_jct"],
+            "dede_user_id": cookies["dede_user_id"],
+        }
+
+    # Unknown / missing inner code — surface it so we can see a B站 format
+    # change in production logs rather than silently succeeding.
+    raise QrLoginError(
+        f"qr_poll: unknown inner_code={inner_code!r} (message={inner_msg!r})"
+    )
 
 
 # ---------------------------------------------------------------------------
