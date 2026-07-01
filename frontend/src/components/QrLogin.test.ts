@@ -16,10 +16,14 @@ describe("QrLogin.vue", () => {
   });
 
   it("renders the QR image when qrcodeUrl is set", async () => {
+    // B站 returns a scan-link string for `qrcode_url` (NOT an image URL).
+    // QrLogin must render it via QRCode.toDataURL into a PNG data URL.
+    const scanLink =
+      "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=k1";
     server.use(
       http.post("*/api/auth/qr/start", () =>
         HttpResponse.json({
-          qrcode_url: "data:image/png;base64,FAKEQR",
+          qrcode_url: scanLink,
           qrcode_key: "k1",
         }),
       ),
@@ -29,13 +33,16 @@ describe("QrLogin.vue", () => {
     );
 
     const wrapper = mount(QrLogin);
-    const store = useAuthStore();
-    await store.startQr();
+    await flushPromises();
+    await flushPromises();
     await flushPromises();
 
     const img = wrapper.find("img");
     expect(img.exists()).toBe(true);
-    expect(img.attributes("src")).toBe("data:image/png;base64,FAKEQR");
+    const src = img.attributes("src");
+    expect(src).toMatch(/^data:image\/png;base64,/);
+    // Crucially, the raw scan-link string MUST NOT be passed through as src.
+    expect(src).not.toBe(scanLink);
   });
 
   it("renders a '重新生成' button when qrPollStatus === 'expired'", async () => {
@@ -65,7 +72,7 @@ describe("QrLogin.vue", () => {
       http.post("*/api/auth/qr/start", () => {
         startCalls += 1;
         return HttpResponse.json({
-          qrcode_url: `data:image/png;base64,QR${startCalls}`,
+          qrcode_url: `https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=k${startCalls}`,
           qrcode_key: `k${startCalls}`,
         });
       }),
@@ -75,10 +82,9 @@ describe("QrLogin.vue", () => {
     );
 
     const wrapper = mount(QrLogin);
-    const store = useAuthStore();
-    await store.startQr();
     await flushPromises();
-
+    await flushPromises();
+    await flushPromises();
     expect(startCalls).toBe(1);
 
     const buttons = wrapper.findAll("button");
@@ -86,9 +92,109 @@ describe("QrLogin.vue", () => {
     expect(regen).toBeDefined();
     await regen!.trigger("click");
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
     expect(startCalls).toBe(2);
     const img = wrapper.find("img");
-    expect(img.attributes("src")).toBe("data:image/png;base64,QR2");
+    const src = img.attributes("src");
+    expect(src).toMatch(/^data:image\/png;base64,/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // F3 manual-QA regression: the page used to sit forever on
+  // "正在生成二维码…" because (a) the browser never called /api/auth/qr/start
+  // (no onMounted wired startQr) and (b) the SPA tried to load the B站
+  // scan-link as if it were an image src. These tests pin both halves.
+  // ---------------------------------------------------------------------------
+
+  it("calls auth.startQr() automatically on mount (H1: F3 regression)", async () => {
+    server.use(
+      http.post("*/api/auth/qr/start", () =>
+        HttpResponse.json({
+          qrcode_url: "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=auto",
+          qrcode_key: "auto-key",
+        }),
+      ),
+      http.get("*/api/auth/qr/poll", () =>
+        HttpResponse.json({ status: "scanning" }),
+      ),
+    );
+
+    const wrapper = mount(QrLogin);
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+    void wrapper;
+
+    const store = useAuthStore();
+    expect(store.qrcodeUrl).toBe(
+      "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=auto",
+    );
+    expect(store.qrKey).toBe("auto-key");
+    expect(store.qrPollStatus).toBe("scanning");
+  });
+
+  it("renders the scan-link string as a QR <img> (H2: scan-link is NOT an image URL)", async () => {
+    server.use(
+      http.post("*/api/auth/qr/start", () =>
+        HttpResponse.json({
+          qrcode_url:
+            "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=scanlink",
+          qrcode_key: "scanlink",
+        }),
+      ),
+      http.get("*/api/auth/qr/poll", () =>
+        HttpResponse.json({ status: "scanning" }),
+      ),
+    );
+
+    const wrapper = mount(QrLogin);
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+    // The qrcode lib's PNG pipeline goes through libuv's zlib worker
+    // thread, which notifies the main thread via setImmediate in a
+    // subsequent drain cycle. `flushPromises()` (also setImmediate) is
+    // not guaranteed to wait for that second-cycle callback, so we add a
+    // small real-timer flush. Without this the H2 assertion is flaky in
+    // ~80% of full-suite runs (~1/5 pass rate observed locally).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const img = wrapper.find("img");
+    expect(img.exists()).toBe(true);
+    const src = img.attributes("src");
+    expect(src).toBeTruthy();
+    // The src must be a rendered QR data URL (data:image/...) — NOT the raw
+    // scan-link string itself, which <el-image> would try to fetch as an
+    // image and fail.
+    expect(src).not.toBe(
+      "https://passport.bilibili.com/x/passport-login/web/qrcode/confirm?qrcode_key=scanlink",
+    );
+    expect(src).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("shows an error message + retry button when startQr rejects (no silent 'generating')", async () => {
+    server.use(
+      http.post("*/api/auth/qr/start", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+
+    const wrapper = mount(QrLogin);
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    const text = wrapper.text();
+    // Must NOT stay on the "正在生成二维码…" default branch.
+    expect(text).not.toContain("正在生成二维码…");
+    // Must surface the failure with a retry affordance.
+    expect(text).toMatch(/失败|重试/);
+
+    const retryBtn = wrapper
+      .findAll("button")
+      .find((b) => b.text().includes("重试"));
+    expect(retryBtn).toBeDefined();
   });
 });
