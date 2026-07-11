@@ -17,8 +17,8 @@ const text = computed(() =>
 </script>
 
 <template>
-  <div v-if="visible" class="connection-banner" data-testid="connection-banner">
-    <span class="dot" />
+  <div v-if="visible" class="connection-banner" data-testid="connection-banner" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true" />
     <span class="text">{{ text }}</span>
   </div>
 </template>
@@ -28,19 +28,19 @@ const text = computed(() =>
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  margin: 8px 0;
-  background: var(--el-color-warning-light-9, #fdf6ec);
-  border: 1px solid var(--el-color-warning-light-5, #e6a23c);
-  border-radius: 6px;
-  color: var(--el-color-warning-dark-2, #b88230);
-  font-size: 13px;
+  padding: 8px 12px;
+  border: 1px solid rgb(242 185 95 / 20%);
+  border-radius: 10px;
+  color: var(--cc-warning);
+  background: var(--cc-warning-soft);
+  font-size: 11px;
 }
 .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--el-color-warning, #e6a23c);
+  background: var(--cc-warning);
+  box-shadow: 0 0 10px rgb(242 185 95 / 36%);
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {

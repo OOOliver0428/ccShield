@@ -27,8 +27,8 @@ from pydantic import BaseModel
 class Medal(BaseModel):
     """粉丝牌 (channel/medal) info attached to a danmaku.
 
-    Field convention matches the test fixtures: B站 sends the medal
-    as ``[medal_name, medal_level]`` (name first, level second). See
+    Field convention matches the test fixtures: B站 sends DANMU_MSG medal
+    data as ``[medal_level, medal_name, ...]`` (level first). See
     test_normalize_danmu_msg_basic in ``tests/test_room_session.py``.
     """
 
@@ -47,7 +47,7 @@ class DanmakuEvent(BaseModel):
     * ``uname``  — ``info[2][1]`` (sender username)
     * ``ts``     — ``info[0][4]`` (server-reported timestamp, seconds)
     * ``guard_level`` — ``info[7]`` if present, else 0
-      (0=none, 1=舰长, 2=提督, 3=总督)
+      (0=none, 1=总督, 2=提督, 3=舰长)
     * ``medal``  — ``info[3]`` if present and non-empty (parsed as
       :class:`Medal`); None otherwise
     """
@@ -70,8 +70,10 @@ class SuperChatEvent(BaseModel):
     * ``uid``    — ``data.uid``
     * ``uname``  — ``data.user_info.uname``
     * ``text``   — ``data.message``
-    * ``price``  — ``data.price`` (RMB cents? B站 reports as integer)
+    * ``price``  — ``data.price`` (RMB)
     * ``ts``     — ``data.start_time`` (server-reported timestamp)
+    * ``end_ts`` — ``data.end_time`` (the authoritative expiry time)
+    * ``duration`` — ``data.time`` (paid display duration in seconds)
     """
 
     type: Literal["sc"]
@@ -80,6 +82,22 @@ class SuperChatEvent(BaseModel):
     text: str
     price: int
     ts: int
+    id: str = ""
+    end_ts: int = 0
+    duration: int = 0
+    guard_level: int = 0
+    medal: Medal | None = None
+    background_color: str = ""
+    background_bottom_color: str = ""
+    background_price_color: str = ""
+    message_font_color: str = ""
+
+
+class SuperChatDeleteEvent(BaseModel):
+    """Remove one or more active Super Chats before their natural expiry."""
+
+    type: Literal["sc_delete"]
+    ids: list[str]
 
 
 class RoomStatusEvent(BaseModel):
@@ -96,7 +114,9 @@ class RoomStatusEvent(BaseModel):
 # Closed union of every event a callback may receive. Consumers can
 # switch on ``event.type`` (``"danmaku" | "sc" | "room_status"``) and
 # isinstance against the concrete model.
-BridgeEvent = DanmakuEvent | SuperChatEvent | RoomStatusEvent
+BridgeEvent = (
+    DanmakuEvent | SuperChatEvent | SuperChatDeleteEvent | RoomStatusEvent
+)
 
 
 __all__ = [
@@ -104,5 +124,6 @@ __all__ = [
     "DanmakuEvent",
     "Medal",
     "RoomStatusEvent",
+    "SuperChatDeleteEvent",
     "SuperChatEvent",
 ]

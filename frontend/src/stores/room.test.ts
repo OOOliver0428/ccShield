@@ -32,6 +32,7 @@ describe("room store", () => {
       expect(capturedUrl!.searchParams.get("input")).toBe("22210347");
       expect(store.currentRoomId).toBe(22210347);
       expect(store.resolvedTitle).toBe("Some Room");
+      expect(store.resolvedUname).toBe("anchor");
     });
 
     it("returns null and sets error for non-numeric input", async () => {
@@ -95,6 +96,8 @@ describe("room store", () => {
       expect(ok).toBe(false);
       expect(store.status).toBe("disconnected");
       expect(store.currentRoomId).toBeNull();
+      expect(store.resolvedTitle).toBe("");
+      expect(store.resolvedUname).toBe("");
     });
   });
 

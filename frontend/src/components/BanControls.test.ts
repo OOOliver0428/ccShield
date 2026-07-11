@@ -24,14 +24,15 @@ describe("BanControls.vue", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the duration selector with all six options", () => {
+  it("renders the five supported non-permanent duration options", () => {
     const wrapper = mount(BanControls, { props: { uid: 42, uname: "bob" } });
     const options = wrapper.findAll('[data-testid="duration-option"]');
-    expect(options.length).toBeGreaterThanOrEqual(6);
+    expect(options).toHaveLength(5);
     const labels = options.map((o) => o.text());
     expect(labels).toEqual(
-      expect.arrayContaining(["本场", "1小时", "24小时", "7天", "30天", "永久"]),
+      ["本场", "1小时", "24小时", "7天", "30天"],
     );
+    expect(labels).not.toContain("永久");
   });
 
   it("clicking 禁言 with default duration POSTs /api/ban with hour=1 (default selection)", async () => {
@@ -57,11 +58,11 @@ describe("BanControls.vue", () => {
       room_id: 12345,
       uid: 42,
       hour: 1,
-      reason: undefined,
+      uname: "bob",
     });
   });
 
-  it("selects 永久 → hour=-1 in the POST body", async () => {
+  it("selects 30天 → hour=720 in the POST body", async () => {
     const room = useRoomStore();
     room.currentRoomId = 9999;
 
@@ -77,14 +78,13 @@ describe("BanControls.vue", () => {
 
     const wrapper = mount(BanControls, { props: { uid: 7, uname: "x" } });
     const options = wrapper.findAll('[data-testid="duration-option"]');
-    // Find the option labeled 永久.
-    const permanent = options.find((o) => o.text() === "永久");
-    expect(permanent).toBeDefined();
-    await permanent!.trigger("click");
+    const thirtyDays = options.find((o) => o.text() === "30天");
+    expect(thirtyDays).toBeDefined();
+    await thirtyDays!.trigger("click");
     await wrapper.find('[data-testid="ban-btn"]').trigger("click");
     await flushPromises();
 
-    expect((postedBody as { hour: number }).hour).toBe(-1);
+    expect((postedBody as { hour: number }).hour).toBe(720);
   });
 
   it("selects 本场 → hour=0 in the POST body", async () => {
@@ -140,7 +140,7 @@ describe("BanControls.vue", () => {
     room.currentRoomId = 12345;
 
     let postCalls = 0;
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     server.use(
       http.post("*/api/ban", async () => {
         postCalls += 1;
@@ -148,11 +148,15 @@ describe("BanControls.vue", () => {
       }),
     );
 
-    const wrapper = mount(BanControls, { props: { uid: 42, uname: "bob" } });
+    const wrapper = mount(BanControls, {
+      props: { uid: 42, uname: "bob", message: "原始弹幕" },
+    });
     await wrapper.find('[data-testid="ban-btn"]').trigger("click");
     await flushPromises();
 
     expect(postCalls).toBe(0);
+    expect(confirm.mock.calls[0]?.[0]).toContain("bob (uid:42)");
+    expect(confirm.mock.calls[0]?.[0]).toContain("发言：原始弹幕");
   });
 
   it("on 200 success → emits 'success' event with the banned uid", async () => {

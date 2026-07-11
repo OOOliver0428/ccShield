@@ -1,9 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>reccshield</title>
+    <meta name="theme-color" content="#090c12" />
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("ccshield-theme") === "light" ? "light" : "dark";
+      } catch (_) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+    <title>ccShield · 直播房管工作台</title>
   </head>
   <body>
     <div id="app"></div>

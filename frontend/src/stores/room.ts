@@ -37,12 +37,18 @@ export interface ResolveRoomResponse {
   is_short_id?: boolean;
 }
 
+interface StartRoomResponse {
+  room_id: number;
+  title?: string;
+}
+
 export const useRoomStore = defineStore("room", () => {
   const roomId = ref<string>("");
   const currentRoomId = ref<number | null>(null);
   const status = ref<RoomStatus>("disconnected");
   const error = ref<string | null>(null);
   const resolvedTitle = ref<string>("");
+  const resolvedUname = ref<string>("");
   const resolvedShortId = ref<number | null>(null);
 
   async function resolve(input: string): Promise<ResolveRoomResponse | null> {
@@ -60,6 +66,7 @@ export const useRoomStore = defineStore("room", () => {
       currentRoomId.value = response.data.room_id;
       resolvedShortId.value = response.data.short_id ?? numeric;
       resolvedTitle.value = response.data.title ?? "";
+      resolvedUname.value = response.data.uname ?? "";
       roomId.value = String(response.data.room_id);
       return response.data;
     } catch (err) {
@@ -72,8 +79,10 @@ export const useRoomStore = defineStore("room", () => {
     error.value = null;
     status.value = "connecting";
     try {
-      await httpClient.post("/rooms/start", { room_id: roomIdToStart });
-      currentRoomId.value = roomIdToStart;
+      const response = await httpClient.post<StartRoomResponse>("/rooms/start", {
+        room_id: roomIdToStart,
+      });
+      currentRoomId.value = response.data.room_id;
       status.value = "connected";
       return true;
     } catch (err) {
@@ -92,6 +101,7 @@ export const useRoomStore = defineStore("room", () => {
       status.value = "disconnected";
       currentRoomId.value = null;
       resolvedTitle.value = "";
+      resolvedUname.value = "";
       resolvedShortId.value = null;
     }
   }
@@ -121,6 +131,7 @@ export const useRoomStore = defineStore("room", () => {
     status,
     error,
     resolvedTitle,
+    resolvedUname,
     resolvedShortId,
     resolve,
     connect,

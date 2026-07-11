@@ -215,6 +215,44 @@ async def test_subscribe_after_start_receives_current_snapshot() -> None:
         await mgr.stop()
 
 
+async def test_start_indexes_real_payload_by_target_uid() -> None:
+    """Real payload uid is the moderator; tuid is the muted user."""
+    client = _make_client(
+        [
+            {
+                "id": 101,
+                "uid": 55,
+                "name": "moderator",
+                "tuid": 1001,
+                "tname": "target-a",
+                "ctime": "2026-07-10 10:00:00",
+                "block_end_time": "2026-07-11 10:00:00",
+            },
+            {
+                "id": 102,
+                "uid": 55,
+                "name": "moderator",
+                "tuid": 1002,
+                "tname": "target-b",
+                "ctime": "2026-07-10 10:00:00",
+                "block_end_time": "永久",
+            },
+        ]
+    )
+    mgr = _make_manager(client)
+
+    await mgr.start(room_id=1601605, is_running=lambda: True)
+    try:
+        assert set(mgr._bans) == {1001, 1002}
+        assert mgr._bans[1001]["uname"] == "target-a"
+        assert mgr._bans[1001]["hour"] == 24
+        assert mgr._bans[1002]["uname"] == "target-b"
+        assert mgr._bans[1002]["hour"] == -1
+        assert mgr._bans[1002]["expires_at"] == "永久"
+    finally:
+        await mgr.stop()
+
+
 # ---------------------------------------------------------------------------
 # 3. on_ban: add uid + broadcast ban_added
 # ---------------------------------------------------------------------------
@@ -375,7 +413,10 @@ async def test_stop_cancels_reconcile_and_clears_state() -> None:
 
     assert mgr._reconcile_task is not None
     assert mgr._room_id == 100
-    assert mgr._bans == {1: {"uid": 1}}
+    assert set(mgr._bans) == {1}
+    assert mgr._bans[1]["uid"] == 1
+    assert mgr._bans[1]["block_id"] is None
+    assert mgr._bans[1]["pending"] is False
 
     await mgr.stop()
 

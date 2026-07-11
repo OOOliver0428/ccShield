@@ -29,27 +29,31 @@ export interface BanEntry {
   /** Bilibili user id. Primary key. */
   uid: number;
   /** Block id assigned by B站; needed for the 解禁 (unban) call. */
-  id?: string;
-  /** Display name; sometimes absent in the WS payload. */
-  uname?: string;
-  /** Ban duration in hours (``-1`` = permanent). Optional in deltas. */
-  hour?: number;
+  block_id: number | null;
+  /** Display name; empty when the upstream payload omits it. */
+  uname: string;
+  /** Ban duration in hours. */
+  hour: number | null;
   /** Operator-supplied reason. */
-  reason?: string;
-  /** Ban-time unix seconds (best-effort). */
-  ctime?: number;
-  /** Arbitrary extra fields from the B站 payload (``extra=ignore``). */
-  [extra: string]: unknown;
+  reason: string;
+  /** Ban-time and expiry are either unix seconds or B站 display strings. */
+  created_at: number | string | null;
+  expires_at: number | string | null;
+  /** True until a list refresh supplies the authoritative block id. */
+  pending: boolean;
 }
+
+export type BanEntryUpdate = Pick<BanEntry, "uid"> &
+  Partial<Omit<BanEntry, "uid">>;
 
 export interface BanSnapshotMessage {
   event: "snapshot";
-  bans: BanEntry[];
+  bans: BanEntryUpdate[];
 }
 
 export interface BanAddedMessage {
   event: "ban_added";
-  ban: BanEntry;
+  ban: BanEntryUpdate;
 }
 
 export interface BanRemovedMessage {
@@ -65,29 +69,54 @@ export type BanListMessage =
 export const useBanStore = defineStore("ban", () => {
   const banList = ref<BanEntry[]>([]);
   const loading = ref<boolean>(false);
+  const submittingUids = ref<number[]>([]);
 
   function setLoading(value: boolean): void {
     loading.value = value;
   }
 
-  function applySnapshot(bans: BanEntry[]): void {
+  function normalizeEntry(entry: BanEntryUpdate): BanEntry {
+    return {
+      block_id: entry.block_id ?? null,
+      uid: entry.uid,
+      uname: entry.uname ?? "",
+      hour: entry.hour ?? null,
+      reason: entry.reason ?? "",
+      created_at: entry.created_at ?? null,
+      expires_at: entry.expires_at ?? null,
+      pending: entry.pending ?? false,
+    };
+  }
+
+  function applySnapshot(bans: BanEntryUpdate[]): void {
     // Dedup by uid (last write wins) — the snapshot is authoritative.
     const map = new Map<number, BanEntry>();
     for (const entry of bans) {
-      map.set(entry.uid, entry);
+      map.set(entry.uid, normalizeEntry(entry));
     }
     banList.value = Array.from(map.values());
   }
 
-  function addBan(entry: BanEntry): void {
+  function addBan(entry: BanEntryUpdate): void {
     const idx = banList.value.findIndex((b) => b.uid === entry.uid);
     if (idx === -1) {
-      banList.value = [...banList.value, entry];
+      banList.value = [...banList.value, normalizeEntry(entry)];
       return;
     }
     // Merge — preserve prior fields the delta doesn't carry.
     const prior = banList.value[idx]!;
-    const merged: BanEntry = { ...prior, ...entry };
+    const blockId = entry.block_id ?? prior.block_id;
+    const merged: BanEntry = {
+      ...prior,
+      ...entry,
+      block_id: blockId,
+      // An optimistic response can arrive after the authoritative WS
+      // snapshot. Never downgrade a confirmed row back to "正在同步".
+      pending:
+        blockId !== null || entry.pending === false
+          ? false
+          : (entry.pending ?? prior.pending),
+    };
     const next = banList.value.slice();
     next[idx] = merged;
     banList.value = next;
@@ -97,9 +126,24 @@ export const useBanStore = defineStore("ban", () => {
     banList.value = banList.value.filter((b) => b.uid !== uid);
   }
 
+  function beginSubmission(uid: number): boolean {
+    if (submittingUids.value.includes(uid)) return false;
+    submittingUids.value = [...submittingUids.value, uid];
+    return true;
+  }
+
+  function endSubmission(uid: number): void {
+    submittingUids.value = submittingUids.value.filter((item) => item !== uid);
+  }
+
+  function isSubmitting(uid: number): boolean {
+    return submittingUids.value.includes(uid);
+  }
+
   function clear(): void {
     banList.value = [];
     loading.value = false;
+    submittingUids.value = [];
   }
 
   return {
@@ -109,6 +153,9 @@ export const useBanStore = defineStore("ban", () => {
     applySnapshot,
     addBan,
     removeBan,
+    beginSubmission,
+    endSubmission,
+    isSubmitting,
     clear,
   };
 });

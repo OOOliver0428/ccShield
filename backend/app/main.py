@@ -109,12 +109,17 @@ def migrate_legacy_env(
         # back to copy+remove; for a same-filesystem move (the common
         # case) it's a rename. fsync the directory so a crash before
         # the directory entry commits doesn't leave a half-moved file.
+        # Windows does not expose ``O_DIRECTORY`` and does not support
+        # opening a directory this way, so the durability flush is a
+        # POSIX-only best effort.
         shutil.move(str(legacy), str(target))
-        dir_fd = os.open(str(root), os.O_DIRECTORY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if directory_flag is not None:
+            dir_fd = os.open(str(root), directory_flag)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except OSError as exc:
         logger.warning(
             "migrate_legacy_env: failed to move {} → {}: {}",

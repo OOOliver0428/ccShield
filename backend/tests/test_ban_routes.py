@@ -118,6 +118,7 @@ class _FakeBanListManager:
         self.on_unban_calls: list[int] = []
         self.start_calls: list[int] = []
         self.stop_calls: int = 0
+        self.refresh_calls: int = 0
         # Pre-populated bans; tests can mutate to simulate reconcile.
         self.bans: dict[int, dict[str, Any]] = {}
 
@@ -134,6 +135,10 @@ class _FakeBanListManager:
         self.stop_calls += 1
         self._room_id = None
         self._subscribers.clear()
+
+    async def refresh(self, *, preserve_pending: bool = True) -> list[dict[str, Any]]:
+        self.refresh_calls += 1
+        return list(self.bans.values())
 
     async def subscribe(self, cb: Any) -> None:
         self._subscribers.append(cb)
@@ -257,6 +262,9 @@ def test_post_ban_returns_200_and_calls_on_ban_when_manager_running(
     assert uid == 42
     assert entry["uid"] == 42
     assert entry["hour"] == 1
+    assert entry["pending"] is True
+    assert entry["block_id"] is None
+    assert fake_banlist_manager.refresh_calls == 1
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +288,65 @@ def test_post_ban_returns_400_when_ban_user_returns_false(
     )
     assert response.status_code == 400
     assert fake_banlist_manager.on_ban_calls == []
+
+
+@pytest.mark.parametrize("hour", [0, 1, 24, 168, 720])
+def test_post_ban_accepts_only_supported_duration_levels(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+    fake_banlist_manager: _FakeBanListManager,
+    hour: int,
+) -> None:
+    fake_bili_client.ban_user = AsyncMock(return_value=True)
+    fake_banlist_manager._room_id = None
+
+    response = client.post(
+        "/api/ban",
+        json={"room_id": 22210347, "uid": 42, "hour": hour},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 200
+    fake_bili_client.ban_user.assert_awaited_once_with(
+        22210347, 42, hour, ""
+    )
+
+
+@pytest.mark.parametrize("hour", [-1, 2, 23, 721])
+def test_post_ban_rejects_unsupported_duration_without_upstream_call(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+    hour: int,
+) -> None:
+    fake_bili_client.ban_user = AsyncMock(return_value=True)
+
+    response = client.post(
+        "/api/ban",
+        json={"room_id": 22210347, "uid": 42, "hour": hour},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 422
+    fake_bili_client.ban_user.assert_not_awaited()
+
+
+def test_post_ban_rejects_reason_longer_than_200_chars(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+) -> None:
+    fake_bili_client.ban_user = AsyncMock(return_value=True)
+    response = client.post(
+        "/api/ban",
+        json={
+            "room_id": 22210347,
+            "uid": 42,
+            "hour": 1,
+            "reason": "x" * 201,
+        },
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+    assert response.status_code == 422
+    fake_bili_client.ban_user.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +467,16 @@ def test_get_ban_list_returns_manager_state_when_running(
     assert len(body["bans"]) == 2
     uids = sorted(b["uid"] for b in body["bans"])
     assert uids == [1, 2]
+    assert all(set(entry) == {
+        "block_id",
+        "uid",
+        "uname",
+        "hour",
+        "reason",
+        "created_at",
+        "expires_at",
+        "pending",
+    } for entry in body["bans"])
     # Manager state path — bili_client.get_ban_list MUST NOT have been
     # called (would have hit the network).
     fake_bili_client.get_ban_list.assert_not_awaited()
@@ -423,8 +500,89 @@ def test_get_ban_list_falls_back_to_bili_client_when_manager_not_running(
     assert response.status_code == 200
     body = response.json()
     assert body["room_id"] == 22210347
-    assert body["bans"] == [{"uid": 7, "hour": 3}]
+    assert body["bans"] == [
+        {
+            "block_id": None,
+            "uid": 7,
+            "uname": "",
+            "hour": 3,
+            "reason": "",
+            "created_at": None,
+            "expires_at": None,
+            "pending": False,
+        }
+    ]
     fake_bili_client.get_ban_list.assert_awaited_once_with(22210347)
+
+
+def test_get_ban_list_refresh_true_forces_running_manager_refresh(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+    fake_banlist_manager: _FakeBanListManager,
+) -> None:
+    fake_banlist_manager._room_id = 22210347
+    fake_banlist_manager.bans = {
+        8: {
+            "block_id": 88,
+            "uid": 8,
+            "uname": "fresh",
+            "hour": 24,
+            "reason": "spam",
+            "created_at": 1700000000,
+            "expires_at": 1700086400,
+            "pending": False,
+        }
+    }
+
+    response = client.get(
+        "/api/ban-list/22210347?refresh=true",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bans"][0]["block_id"] == 88
+    assert fake_banlist_manager.refresh_calls == 1
+    fake_bili_client.get_ban_list.assert_not_awaited()
+
+
+def test_get_ban_list_normalizes_bilibili_field_aliases(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+    fake_banlist_manager: _FakeBanListManager,
+) -> None:
+    fake_banlist_manager._room_id = None
+    fake_bili_client.get_ban_list = AsyncMock(
+        return_value=[
+            {
+                "id": "91",
+                "uid": "305721696",
+                "tuid": "9",
+                "tname": "alias-user",
+                "msg": "manual reason",
+                "ctime": "2026-07-10 19:00:00",
+                "block_end_time": "永久",
+            }
+        ]
+    )
+
+    response = client.get(
+        "/api/ban-list/22210347",
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bans"] == [
+        {
+            "block_id": 91,
+            "uid": 9,
+            "uname": "alias-user",
+            "hour": -1,
+            "reason": "manual reason",
+            "created_at": "2026-07-10 19:00:00",
+            "expires_at": "永久",
+            "pending": False,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +661,38 @@ def test_openapi_lists_ban_routes(client: TestClient) -> None:
     assert "/api/ban-list/{room_id}" in paths, (
         "missing /api/ban-list/{room_id} in OpenAPI"
     )
+
+
+def test_get_bili_client_refreshes_latest_settings_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api import ban_routes
+
+    monkeypatch.setattr(ban_routes, "_bili_client", None)
+    fake = MagicMock(spec=BilibiliClient)
+    fake.update_cookies = MagicMock(return_value=None)
+    monkeypatch.setattr(ban_routes, "BilibiliClient", lambda: fake)
+
+    resolved = ban_routes._get_bili_client()
+
+    assert resolved is fake
+    fake.update_cookies.assert_called_once_with(dict(settings.cookies))
+
+
+async def test_stop_banlist_manager_cancels_and_clears_singleton(
+    fake_banlist_manager: _FakeBanListManager,
+) -> None:
+    from app.api import ban_routes
+    from app.room.banlist import get_banlist_manager, set_banlist_manager
+
+    fake_banlist_manager._room_id = 22210347
+    set_banlist_manager(fake_banlist_manager)  # type: ignore[arg-type]
+
+    await ban_routes.stop_banlist_manager()
+
+    assert fake_banlist_manager.stop_calls == 1
+    assert ban_routes.banlist_manager is None
+    assert get_banlist_manager() is None
 
 
 # ---------------------------------------------------------------------------

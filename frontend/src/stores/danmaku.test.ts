@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
-import { useDanmakuStore, DANMAKU_CAP } from "./danmaku";
+import { useDanmakuStore, DANMAKU_CAP, SC_CAP } from "./danmaku";
 import type { BridgeMessageEvent, BridgeScEvent } from "../api/ws";
 
 function makeDanmaku(uid: number, text: string): BridgeMessageEvent {
@@ -16,19 +16,33 @@ function makeDanmaku(uid: number, text: string): BridgeMessageEvent {
 }
 
 function makeSc(uid: number, text: string, price: number): BridgeScEvent {
+  const now = Math.floor(Date.now() / 1000);
   return {
     type: "sc",
+    id: `sc-${uid}`,
     uid,
     uname: `user${uid}`,
     text,
     price,
-    ts: 1_700_000_000,
+    ts: now,
+    end_ts: now + 300,
+    duration: 300,
+    guard_level: 0,
+    medal: null,
+    background_color: "#EDF5FF",
+    background_bottom_color: "#2A60B2",
+    background_price_color: "#7497CD",
+    message_font_color: "#24476B",
   };
 }
 
 describe("danmaku store", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("addDanmaku appends events and exposes them in the list", () => {
@@ -75,12 +89,34 @@ describe("danmaku store", () => {
     expect(store.list[499]).toEqual(rich);
   });
 
-  it("addSc appends to scList (no cap)", () => {
+  it("keeps only the newest active SC cards", () => {
     const store = useDanmakuStore();
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < SC_CAP + 1; i++) {
       store.addSc(makeSc(i, `sc-${i}`, 50));
     }
-    expect(store.scList).toHaveLength(600);
+    expect(store.scList).toHaveLength(SC_CAP);
+    expect(store.scList[0]?.id).toBe(`sc-${SC_CAP}`);
+  });
+
+  it("expires SC at the end_ts supplied by B站", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const store = useDanmakuStore();
+    store.addSc(makeSc(1, "paid", 30));
+    expect(store.scList).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(299_999);
+    expect(store.scList).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.scList).toHaveLength(0);
+  });
+
+  it("removes SC immediately on SUPER_CHAT_MESSAGE_DELETE", () => {
+    const store = useDanmakuStore();
+    store.addSc(makeSc(1, "one", 30));
+    store.addSc(makeSc(2, "two", 100));
+    store.removeSc(["sc-1"]);
+    expect(store.scList.map((item) => item.id)).toEqual(["sc-2"]);
   });
 
   it("clear empties both lists", () => {

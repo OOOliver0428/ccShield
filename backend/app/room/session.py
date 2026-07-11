@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Final, cast
@@ -44,6 +46,7 @@ from app.room.events import (
     DanmakuEvent,
     Medal,
     RoomStatusEvent,
+    SuperChatDeleteEvent,
     SuperChatEvent,
 )
 
@@ -57,6 +60,10 @@ BridgeCallback = Callable[[BridgeEvent], Awaitable[None]]
 
 # Default dedup buffer size — matches ccShield's RoomManager.
 DEFAULT_DEDUP_SIZE: Final[int] = 5000
+_SC_BOOTSTRAP_TIMEOUT: Final[float] = 5.0
+_HEX_COLOR_RE: Final[re.Pattern[str]] = re.compile(
+    r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$"
+)
 
 
 class RoomSession:
@@ -85,7 +92,12 @@ class RoomSession:
         self._callback_lock = asyncio.Lock()
 
         # Bounded seen-msg-id ring buffer. Reset on disconnect().
-        self._seen_ids: deque[str] = deque(maxlen=_dedup_size)
+        self._seen_ids: deque[str] = deque()
+        self._seen_id_set: set[str] = set()
+
+        # Active SC cards returned by getInfoByRoom during connect. The
+        # RoomBridge seeds its durable active-SC replay map from this list.
+        self._initial_super_chats: list[SuperChatEvent] = []
 
         # Public, observable state.
         self.room_id: int | None = None
@@ -137,6 +149,9 @@ class RoomSession:
         if ok:
             self.room_id = real_room_id
             self.status = "connected"
+            self._initial_super_chats = await self._load_active_super_chats(
+                real_room_id
+            )
             logger.info(
                 "room_session.connect: connected room={} (input={})",
                 real_room_id,
@@ -151,6 +166,7 @@ class RoomSession:
         # _auth_timeout window, etc.).
         self.room_id = None
         self._client = None
+        self._initial_super_chats = []
         self.status = "error"
         logger.error(
             "room_session.connect: start() returned False room={} input={}",
@@ -161,6 +177,54 @@ class RoomSession:
             RoomStatusEvent(type="room_status", status="error")
         )
         return False
+
+    @property
+    def initial_super_chats(self) -> list[SuperChatEvent]:
+        """Snapshot of still-active SC cards loaded during ``connect``."""
+        return list(self._initial_super_chats)
+
+    @property
+    def metrics_snapshot(self) -> dict[str, object]:
+        """Current upstream pressure counters, or an empty snapshot offline."""
+        client = self._client
+        return client.metrics_snapshot if client is not None else {}
+
+    async def _load_active_super_chats(
+        self, room_id: int
+    ) -> list[SuperChatEvent]:
+        fetch_obj = getattr(self.bili_client, "get_active_super_chats", None)
+        if not callable(fetch_obj):
+            return []
+        fetch = cast(
+            "Callable[[int], Awaitable[list[dict[str, object]]]]",
+            fetch_obj,
+        )
+        try:
+            payloads = await asyncio.wait_for(
+                fetch(room_id), timeout=_SC_BOOTSTRAP_TIMEOUT
+            )
+        except Exception as exc:
+            logger.warning(
+                "room_session: active SC bootstrap failed room={} err={!r}",
+                room_id,
+                exc,
+            )
+            return []
+
+        now = int(time.time())
+        events: list[SuperChatEvent] = []
+        for payload in payloads:
+            event = self._normalize_super_chat(
+                {"cmd": "SUPER_CHAT_MESSAGE", "data": payload}
+            )
+            if event is not None and event.end_ts > now:
+                events.append(event)
+        logger.info(
+            "room_session: bootstrapped {} active SC room={}",
+            len(events),
+            room_id,
+        )
+        return events
 
     async def _resolve_room_id(self, room_id: int) -> int:
         """Best-effort short→real translation via ``bili_client.get_room_init``.
@@ -225,6 +289,8 @@ class RoomSession:
         self.status = "disconnected"
         # Reset dedup buffer — reconnecting is a fresh observation window.
         self._seen_ids.clear()
+        self._seen_id_set.clear()
+        self._initial_super_chats = []
         self.room_id = None
         await self._broadcast(
             RoomStatusEvent(type="room_status", status="disconnected")
@@ -261,9 +327,14 @@ class RoomSession:
             msg_id_obj = raw.get("dm_v2")
             msg_id = msg_id_obj if isinstance(msg_id_obj, str) else ""
             if msg_id:
-                if msg_id in self._seen_ids:
+                if msg_id in self._seen_id_set:
                     return
-                self._seen_ids.append(msg_id)
+                if self._dedup_size > 0:
+                    if len(self._seen_ids) >= self._dedup_size:
+                        oldest = self._seen_ids.popleft()
+                        self._seen_id_set.discard(oldest)
+                    self._seen_ids.append(msg_id)
+                    self._seen_id_set.add(msg_id)
             # No msg_id → can't dedup; pass through.
 
         await self._broadcast(event)
@@ -299,6 +370,8 @@ class RoomSession:
             return self._normalize_danmu(raw)
         if cmd in ("SUPER_CHAT_MESSAGE", "SUPER_CHAT_MESSAGE_JPN"):
             return self._normalize_super_chat(raw)
+        if cmd == "SUPER_CHAT_MESSAGE_DELETE":
+            return self._normalize_super_chat_delete(raw)
         return None
 
     def _normalize_danmu(
@@ -374,8 +447,7 @@ class RoomSession:
             return None
         data = data_obj
 
-        uid_obj = data.get("uid")
-        uid = uid_obj if isinstance(uid_obj, int) else 0
+        uid = self._as_int(data.get("uid"))
 
         uname = ""
         user_info_obj = data.get("user_info")
@@ -383,15 +455,76 @@ class RoomSession:
             uname_obj = user_info_obj.get("uname")
             if isinstance(uname_obj, str):
                 uname = uname_obj
+        uinfo_obj = data.get("uinfo")
+        if not uname and isinstance(uinfo_obj, dict):
+            base_obj = uinfo_obj.get("base")
+            if isinstance(base_obj, dict):
+                name_obj = base_obj.get("name") or base_obj.get("uname")
+                if isinstance(name_obj, str):
+                    uname = name_obj
+        if not uname:
+            uname_obj = data.get("uname")
+            if isinstance(uname_obj, str):
+                uname = uname_obj
 
         msg_obj = data.get("message")
         text = msg_obj if isinstance(msg_obj, str) else ""
 
-        price_obj = data.get("price")
-        price = price_obj if isinstance(price_obj, int) else 0
+        price = self._as_int(data.get("price") or data.get("rmb"))
 
-        ts_obj = data.get("start_time")
-        ts = ts_obj if isinstance(ts_obj, int) else 0
+        ts = self._as_int(data.get("start_time") or data.get("ts"))
+        duration = self._as_int(data.get("time"))
+        end_ts = self._as_int(data.get("end_time"))
+        if duration <= 0 and end_ts > ts:
+            duration = end_ts - ts
+        if end_ts <= ts:
+            # Real public-WS payloads carry both fields. Keep a defensive
+            # one-minute fallback for partial/legacy payloads rather than
+            # pinning a malformed paid message forever.
+            duration = duration if duration > 0 else 60
+            end_ts = ts + duration
+
+        id_obj = data.get("id") or data.get("message_id")
+        sc_id = self._as_id(id_obj)
+        if not sc_id:
+            sc_id = f"{uid}:{ts}:{price}"
+
+        guard_level = 0
+        if isinstance(user_info_obj, dict):
+            guard_level = self._as_int(user_info_obj.get("guard_level"))
+        if guard_level == 0:
+            guard_level = self._as_int(data.get("guard_level"))
+        if guard_level == 0 and isinstance(uinfo_obj, dict):
+            guard_obj = uinfo_obj.get("guard")
+            if isinstance(guard_obj, dict):
+                guard_level = self._as_int(guard_obj.get("level"))
+
+        medal: Medal | None = None
+        medal_obj = data.get("medal_info")
+        if isinstance(medal_obj, dict):
+            medal_level = self._as_int(medal_obj.get("medal_level"))
+            medal_name_obj = medal_obj.get("medal_name")
+            medal_name = (
+                medal_name_obj if isinstance(medal_name_obj, str) else ""
+            )
+            if medal_name:
+                medal = Medal(name=medal_name, level=medal_level)
+        if medal is None and isinstance(uinfo_obj, dict):
+            modern_medal_obj = uinfo_obj.get("medal")
+            if isinstance(modern_medal_obj, dict):
+                medal_name_obj = modern_medal_obj.get("name")
+                if isinstance(medal_name_obj, str) and medal_name_obj:
+                    medal = Medal(
+                        name=medal_name_obj,
+                        level=self._as_int(modern_medal_obj.get("level")),
+                    )
+        if medal is None:
+            medal_name_obj = data.get("fans_medal_name")
+            if isinstance(medal_name_obj, str) and medal_name_obj:
+                medal = Medal(
+                    name=medal_name_obj,
+                    level=self._as_int(data.get("fans_medal_level")),
+                )
 
         return SuperChatEvent(
             type="sc",
@@ -400,7 +533,63 @@ class RoomSession:
             text=text,
             price=price,
             ts=ts,
+            id=sc_id,
+            end_ts=end_ts,
+            duration=duration,
+            guard_level=guard_level,
+            medal=medal,
+            background_color=self._as_color(data.get("background_color")),
+            background_bottom_color=self._as_color(
+                data.get("background_bottom_color")
+            ),
+            background_price_color=self._as_color(
+                data.get("background_price_color")
+            ),
+            message_font_color=self._as_color(
+                data.get("message_font_color")
+            ),
         )
+
+    def _normalize_super_chat_delete(
+        self, raw: dict[str, object]
+    ) -> SuperChatDeleteEvent | None:
+        data_obj = raw.get("data")
+        if not isinstance(data_obj, dict):
+            return None
+        ids_obj = data_obj.get("ids") or data_obj.get("message_ids")
+        if not isinstance(ids_obj, list):
+            return None
+        ids = [sc_id for item in ids_obj if (sc_id := self._as_id(item))]
+        if not ids:
+            return None
+        return SuperChatDeleteEvent(type="sc_delete", ids=ids)
+
+    @staticmethod
+    def _as_int(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(float(value))
+            except ValueError:
+                return 0
+        return 0
+
+    @staticmethod
+    def _as_id(value: object) -> str:
+        if isinstance(value, bool):
+            return ""
+        if isinstance(value, (int, str)):
+            return str(value)
+        return ""
+
+    @staticmethod
+    def _as_color(value: object) -> str:
+        if isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value):
+            return value
+        return ""
 
     # ------------------------------------------------------------------
     # Internal: fan-out

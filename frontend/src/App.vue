@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
@@ -13,6 +13,7 @@ import RoomInput from "./components/RoomInput.vue";
 import DanmakuList from "./components/DanmakuList.vue";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
 import BanList from "./components/BanList.vue";
+import ThemeToggle from "./components/ThemeToggle.vue";
 
 /**
  * T14 + T19 — top-level shell.
@@ -25,10 +26,9 @@ import BanList from "./components/BanList.vue";
  * 3. Once authenticated, mount the room input. The user resolves a
  *    short id → presses "连接" → the store calls ``POST /rooms/start``
  *    and flips to ``status='connected'``.
- * 4. We watch ``roomStore.currentRoomId``: when it transitions from
- *    ``null`` to a number, we open a ``BridgeWS`` AND a ``BanlistWS``
- *    for that room. The inverse transition (number → null) closes
- *    BOTH WSs and clears BOTH the danmaku and ban stores.
+ * 4. We watch ``currentRoomId`` together with room status. Resolving an
+ *    id updates ``currentRoomId`` before the room is started, so the local
+ *    WebSockets open only after ``POST /rooms/start`` succeeds.
  * 5. The ConnectionBanner is shown whenever the bridge WS is
  *    disconnected or actively retrying — driven by ``wsVisible`` ref.
  *
@@ -58,9 +58,12 @@ const room = useRoomStore();
 const danmaku = useDanmakuStore();
 const ban = useBanStore();
 
-const { currentRoomId } = storeToRefs(room);
+const { currentRoomId, status: roomStatus } = storeToRefs(room);
 
 const wsVisible = ref<boolean>(false);
+const userInitial = computed(() =>
+  (auth.userInfo?.uname?.trim().slice(0, 1) || "U").toUpperCase(),
+);
 let bridge: BridgeWS | null = null;
 let banWs: BanlistWS | null = null;
 
@@ -101,8 +104,8 @@ const onAuthStatusChange = (s: string): void => {
 };
 watch(() => auth.status, onAuthStatusChange);
 
-watch(currentRoomId, (newId, oldId) => {
-  if (oldId !== null && newId === null) {
+watch([currentRoomId, roomStatus], ([newId, newStatus], [oldId]) => {
+  if (newId === null) {
     // Disconnected — close both WSs, drop banner, clear stores.
     bridge?.close();
     bridge = null;
@@ -113,7 +116,9 @@ watch(currentRoomId, (newId, oldId) => {
     ban.clear();
     return;
   }
-  if (oldId === null && newId !== null) {
+  // resolve() also sets currentRoomId, but the backend bridge does not exist
+  // until /rooms/start succeeds. Connecting earlier races the REST request.
+  if (newStatus === "connected" && (oldId !== newId || bridge === null)) {
     // Just connected — open both WSs for this room.
     if (bridge !== null) {
       bridge.close();
@@ -144,6 +149,9 @@ function handleBridgeEvent(event: BridgeEvent): void {
     case "sc":
       danmaku.addSc(event);
       return;
+    case "sc_delete":
+      danmaku.removeSc(event.ids);
+      return;
     case "room_status":
       room.applyRoomStatus(event.status);
       if (event.status === "connected") {
@@ -168,23 +176,66 @@ function handleBridgeEvent(event: BridgeEvent): void {
     >
       加载中…
     </div>
-    <QrLogin
-      v-else-if="auth.status !== 'authenticated'"
-    />
+    <section v-else-if="auth.status !== 'authenticated'" class="login-shell">
+      <ThemeToggle class="login-theme-toggle" />
+      <div class="login-brand">
+        <span class="brand-mark" aria-hidden="true">CS</span>
+        <div>
+          <span class="brand-name">ccShield</span>
+          <span class="brand-caption">LIVE MODERATION CONSOLE</span>
+        </div>
+      </div>
+      <QrLogin />
+      <p class="login-footnote">本地运行 · 登录凭据仅保存在你的设备</p>
+    </section>
     <section v-else class="authenticated-shell" data-testid="authenticated-shell">
       <header class="topbar">
-        <h1 class="brand">reccshield</h1>
-        <span class="welcome">
-          欢迎,
-          <strong>{{ auth.userInfo?.uname ?? "用户" }}</strong>
-          (mid: {{ auth.userInfo?.mid ?? "?" }})
-        </span>
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">CS</span>
+          <div>
+            <h1 class="brand">ccShield</h1>
+            <span class="brand-caption">LIVE MODERATION CONSOLE</span>
+          </div>
+        </div>
+
+        <div class="topbar-status" role="status" aria-live="polite">
+          <span class="status-orb" :class="`status-${room.status}`" aria-hidden="true" />
+          <span>{{ room.status === "connected" ? "房间监控中" : room.status === "connecting" ? "正在连接" : "等待连接" }}</span>
+        </div>
+
+        <ThemeToggle />
+
+        <div class="user-card">
+          <span class="user-avatar" aria-hidden="true">{{ userInitial }}</span>
+          <span class="welcome">
+            <strong>{{ auth.userInfo?.uname ?? "用户" }}</strong>
+            <span>mid: {{ auth.userInfo?.mid ?? "?" }}</span>
+          </span>
+        </div>
       </header>
 
-      <RoomInput />
-      <ConnectionBanner :visible="wsVisible" />
-      <DanmakuList v-if="room.status === 'connected'" />
-      <BanList v-if="room.status === 'connected'" />
+      <div class="console-content">
+        <RoomInput />
+        <ConnectionBanner :visible="wsVisible" />
+        <section
+          v-if="room.status === 'connected'"
+          class="moderator-workspace"
+          data-testid="moderator-workspace"
+        >
+          <DanmakuList />
+          <aside class="moderation-sidebar" aria-label="房管名单侧栏">
+            <BanList />
+          </aside>
+        </section>
+        <section v-else class="workspace-placeholder" aria-hidden="true">
+          <div class="placeholder-grid" />
+          <div class="placeholder-copy">
+            <span class="placeholder-icon">◎</span>
+            <strong>连接直播间后进入房管工作台</strong>
+            <span>实时弹幕、醒目留言与禁言名单会在这里同步显示</span>
+          </div>
+        </section>
+      </div>
     </section>
   </main>
 </template>
@@ -192,41 +243,263 @@ function handleBridgeEvent(event: BridgeEvent): void {
 <style scoped>
 .app-shell {
   min-height: 100vh;
-  padding: 24px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
+  padding: 18px;
 }
 .loading-placeholder {
-  width: 360px;
-  padding: 48px 24px;
+  width: min(420px, calc(100vw - 32px));
+  margin: 16vh auto 0;
+  padding: 44px 24px;
   text-align: center;
-  color: var(--el-text-color-secondary, #909399);
+  color: var(--cc-text-secondary);
   font-size: 14px;
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 4px;
-  background: var(--el-fill-color-blank, #fff);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-panel);
+  background: var(--cc-card-background);
+  box-shadow: var(--cc-shadow-panel);
+}
+.login-shell {
+  position: relative;
+  display: flex;
+  min-height: calc(100vh - 36px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+.login-theme-toggle {
+  position: fixed;
+  z-index: 2;
+  top: 18px;
+  right: 18px;
+}
+.login-brand,
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.login-brand > div,
+.brand-lockup > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.brand-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border: 1px solid var(--cc-brand-border);
+  border-radius: 11px;
+  color: #fff;
+  background: linear-gradient(145deg, #8795ff, #5868d9);
+  box-shadow: var(--cc-brand-shadow);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+}
+.brand-name,
+.brand {
+  margin: 0;
+  color: var(--cc-text);
+  font-size: 18px;
+  font-weight: 720;
+  letter-spacing: -0.35px;
+}
+.brand-caption {
+  color: var(--cc-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.7px;
+}
+.login-footnote {
+  margin: 0;
+  color: var(--cc-text-muted);
+  font-size: 11px;
 }
 .authenticated-shell {
   width: 100%;
-  max-width: 880px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  max-width: 1580px;
+  margin: 0 auto;
 }
 .topbar {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  min-height: 58px;
+  padding: 10px 14px;
+  align-items: center;
+  gap: 18px;
+  border: 1px solid var(--cc-border);
+  border-radius: 15px;
+  background: var(--cc-glass-background);
+  box-shadow: var(--cc-soft-shadow);
+  backdrop-filter: blur(18px);
 }
-.brand {
-  margin: 0;
-  font-size: 20px;
-  letter-spacing: 0.5px;
+.topbar-status {
+  display: inline-flex;
+  margin-left: auto;
+  padding: 7px 10px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--cc-border);
+  border-radius: 999px;
+  color: var(--cc-text-secondary);
+  background: var(--cc-fill-faint);
+  font-size: 11px;
+  font-weight: 650;
+}
+.status-orb {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cc-text-muted);
+  box-shadow: 0 0 0 4px rgb(111 122 140 / 10%);
+}
+.status-orb.status-connected {
+  background: var(--cc-success);
+  box-shadow: 0 0 0 4px var(--cc-success-soft), 0 0 14px rgb(66 211 146 / 35%);
+}
+.status-orb.status-connecting {
+  background: var(--cc-warning);
+  box-shadow: 0 0 0 4px var(--cc-warning-soft);
+}
+.user-card {
+  display: flex;
+  min-width: 0;
+  padding-left: 14px;
+  align-items: center;
+  gap: 9px;
+  border-left: 1px solid var(--cc-border);
+}
+.user-avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid var(--cc-border-strong);
+  border-radius: 50%;
+  color: var(--cc-primary-emphasis);
+  background: var(--cc-primary-soft);
+  font-size: 12px;
+  font-weight: 750;
 }
 .welcome {
-  color: var(--el-text-color-secondary, #606266);
-  font-size: 13px;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  color: var(--cc-text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.welcome strong {
+  overflow: hidden;
+  max-width: 150px;
+  color: var(--cc-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+.moderator-workspace {
+  display: grid;
+  height: clamp(580px, calc(100dvh - 238px), 830px);
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 380px);
+  gap: 12px;
+}
+.moderation-sidebar {
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-placeholder {
+  position: relative;
+  display: grid;
+  min-height: 360px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-panel);
+  background: var(--cc-placeholder-background);
+}
+.placeholder-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background-image:
+    linear-gradient(var(--cc-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cc-border) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at center, #000, transparent 72%);
+}
+.placeholder-copy {
+  position: relative;
+  display: flex;
+  padding: 30px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.placeholder-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+  place-items: center;
+  border: 1px solid var(--cc-border-strong);
+  border-radius: 15px;
+  color: var(--cc-primary);
+  background: var(--cc-primary-soft);
+  font-size: 24px;
+}
+.placeholder-copy strong {
+  color: var(--cc-text-secondary);
+  font-size: 14px;
+}
+.placeholder-copy > span:last-child {
+  color: var(--cc-text-muted);
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .app-shell {
+    padding: 12px;
+  }
+  .moderator-workspace {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .moderation-sidebar {
+    min-height: 480px;
+  }
+  .workspace-placeholder {
+    min-height: 280px;
+  }
+}
+@media (max-width: 640px) {
+  .topbar {
+    gap: 10px;
+  }
+  .topbar-status {
+    padding: 7px;
+  }
+  .topbar-status > span:last-child {
+    display: none;
+  }
+  .user-card {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .welcome {
+    display: none;
+  }
+  .brand-caption {
+    letter-spacing: 1px;
+  }
 }
 </style>

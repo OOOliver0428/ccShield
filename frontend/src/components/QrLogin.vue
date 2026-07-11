@@ -121,7 +121,7 @@ async function submitManual(): Promise<void> {
   <el-card class="qr-login-card" shadow="hover">
     <template #header>
       <div class="card-header">
-        <span class="title">reccshield · 登录</span>
+        <span class="title">登录房管工作台</span>
         <el-button
           link
           type="primary"
@@ -147,11 +147,12 @@ async function submitManual(): Promise<void> {
         </div>
         <div v-else class="qr-placeholder" data-testid="qr-placeholder">加载中…</div>
       </div>
-      <p class="status-text" data-testid="status-text">{{ statusText }}</p>
+      <p class="status-text" data-testid="status-text" role="status" aria-live="polite">{{ statusText }}</p>
       <p
         v-if="startError"
         class="error"
         data-testid="qr-start-error"
+        role="alert"
       >
         {{ startError }}
       </p>
@@ -203,7 +204,7 @@ async function submitManual(): Promise<void> {
           data-testid="buvid3"
         />
       </el-form-item>
-      <p v-if="manualError" class="error" data-testid="manual-error">
+      <p v-if="manualError" class="error" data-testid="manual-error" role="alert">
         {{ manualError }}
       </p>
       <el-button
@@ -221,7 +222,20 @@ async function submitManual(): Promise<void> {
 
 <style scoped>
 .qr-login-card {
-  width: 360px;
+  width: min(420px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--cc-border-strong);
+  border-radius: 18px;
+  background: var(--cc-card-background);
+  box-shadow: var(--cc-shadow-panel);
+  backdrop-filter: blur(20px);
+}
+.qr-login-card :deep(.el-card__header) {
+  padding: 16px 18px;
+  border-bottom-color: var(--cc-border);
+}
+.qr-login-card :deep(.el-card__body) {
+  padding: 22px 24px 24px;
 }
 .card-header {
   display: flex;
@@ -229,39 +243,44 @@ async function submitManual(): Promise<void> {
   align-items: center;
 }
 .title {
-  font-weight: 600;
+  color: var(--cc-text);
+  font-size: 14px;
+  font-weight: 680;
 }
 .qr-section {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 }
 .qr-frame {
-  width: 240px;
-  height: 240px;
-  background: #f5f5f5;
-  border: 1px solid #e4e4e4;
-  border-radius: 4px;
   display: flex;
+  width: 256px;
+  height: 256px;
+  padding: 8px;
   align-items: center;
   justify-content: center;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 30%);
 }
 .qr-image {
   width: 100%;
   height: 100%;
+  border-radius: 8px;
   display: block;
 }
 .qr-placeholder {
-  color: #999;
+  color: #667085;
 }
 .qr-placeholder--err {
   color: var(--el-color-danger);
 }
 .status-text {
   margin: 0;
-  color: #555;
-  font-size: 14px;
+  color: var(--cc-text-secondary);
+  font-size: 12px;
 }
 .qr-actions {
   display: flex;
@@ -271,11 +290,23 @@ async function submitManual(): Promise<void> {
 .manual-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+}
+.manual-section :deep(.el-form-item__label) {
+  color: var(--cc-text-secondary);
 }
 .error {
-  color: var(--el-color-danger);
-  font-size: 13px;
   margin: 0;
+  color: var(--cc-danger);
+  font-size: 12px;
+}
+@media (max-width: 460px) {
+  .qr-login-card :deep(.el-card__body) {
+    padding: 18px 16px 20px;
+  }
+  .qr-frame {
+    width: min(256px, calc(100vw - 80px));
+    height: min(256px, calc(100vw - 80px));
+  }
 }
 </style>

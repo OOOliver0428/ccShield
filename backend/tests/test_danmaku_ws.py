@@ -33,7 +33,7 @@ import asyncio
 import json
 import struct
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from websockets.exceptions import ConnectionClosed
 
@@ -103,6 +103,7 @@ def make_bili_client(
     *,
     danmu_info: dict[str, Any] | None = None,
     user_info: dict[str, Any] | None = None,
+    buvid3: str | None = None,
 ) -> Any:
     """Build a mock BilibiliClient with canned get_danmu_info + get_user_info."""
     if danmu_info is None:
@@ -117,6 +118,9 @@ def make_bili_client(
     cli = AsyncMock()
     cli.get_danmu_info = AsyncMock(side_effect=_get_danmu_info)
     cli.get_user_info = AsyncMock(side_effect=_get_user_info)
+    cli.get_cookie = Mock(
+        side_effect=lambda name: buvid3 if name == "buvid3" else None
+    )
     return cli
 
 
@@ -227,20 +231,12 @@ async def test_start_success_forwards_danmaku_to_on_message() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 1b — AUTH frame must use protover=3 (BROTLI), matching ccShield
-# and the B站 protocol spec. Mismatched protover historically caused
-# silent auth failures → "no danmaku" after connect.
+# Test 1b — AUTH packet is raw even when its JSON requests Brotli messages.
 # ---------------------------------------------------------------------------
 
 
-async def test_auth_frame_uses_brotli_protover_3() -> None:
-    """The AUTH frame sent to the WS must carry ``protover=3`` (BROTLI).
-
-    ccShield's proven implementation packs AUTH with ``PROTOCOL_VERSION = 3``;
-    reccshield had defaulted to RAW (1). B站 may accept either, but
-    matching ccShield reduces surface area for "no danmaku after connect"
-    bugs that proved elusive to debug.
-    """
+async def test_auth_frame_header_is_raw_protover_1() -> None:
+    """AUTH header version is 1; JSON ``protover`` independently stays 3."""
     bili = make_bili_client(user_info={"mid": 1})
     fakes: list[FakeWebSocket] = []
 
@@ -274,8 +270,8 @@ async def test_auth_frame_uses_brotli_protover_3() -> None:
     assert ok is True
     auth_frames = [s for s in fakes[0].sent if is_auth_frame(s)]
     assert len(auth_frames) == 1, fakes[0].sent
-    assert auth_frame_proto_ver(auth_frames[0]) == proto.BROTLI, (
-        f"AUTH frame protover must be BROTLI(3); got {auth_frame_proto_ver(auth_frames[0])}"
+    assert auth_frame_proto_ver(auth_frames[0]) == proto.RAW, (
+        f"AUTH frame protover must be RAW(1); got {auth_frame_proto_ver(auth_frames[0])}"
     )
 
     await asyncio.wait_for(client.stop(), timeout=6.0)
@@ -295,7 +291,7 @@ async def test_start_uses_provided_real_room_id_in_auth_payload() -> None:
     uses that id. ``RoomSession.connect`` is responsible for resolving;
     this test pins the DanmakuClient contract on what it receives.
     """
-    bili = make_bili_client(user_info={"mid": 1})
+    bili = make_bili_client(user_info={"mid": 1}, buvid3="device-id")
     captured_bodies: list[dict[str, Any]] = []
     fakes: list[FakeWebSocket] = []
 
@@ -339,6 +335,7 @@ async def test_start_uses_provided_real_room_id_in_auth_payload() -> None:
     assert auth_body["platform"] == "web"
     assert auth_body["type"] == 2
     assert auth_body["key"] == "tok-abc"
+    assert auth_body["buvid"] == "device-id"
 
     await asyncio.wait_for(client.stop(), timeout=6.0)
 
@@ -479,6 +476,48 @@ async def test_reconnect_after_disconnect_then_give_up() -> None:
     await asyncio.wait_for(client.stop(), timeout=6.0)
 
 
+async def test_reconnect_rotates_upstream_endpoints() -> None:
+    """Consecutive failures use every endpoint instead of pinning host 0."""
+    bili = make_bili_client(user_info={"mid": 7})
+    connect_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_connect(url: str, **kwargs: Any) -> FakeWebSocket:
+        connect_calls.append((url, kwargs))
+        raise OSError("synthetic endpoint failure")
+
+    from app.bilibili.danmaku_ws import DanmakuClient
+
+    client = DanmakuClient(
+        room_id=5,
+        bili_client=bili,
+        on_message=AsyncMock(),
+        _reconnect_delays=(0.0,),
+        _reconnect_max_attempts=5,
+    )
+    client.running = True
+
+    urls = (
+        "wss://chat0.bilibili.com:443/sub",
+        "wss://chat1.bilibili.com:443/sub",
+        "wss://chat2.bilibili.com:443/sub",
+    )
+    with (
+        patch("app.bilibili.danmaku_ws.websockets.connect", new=fake_connect),
+        patch("app.bilibili.danmaku_ws.asyncio.sleep", new=_yield_sleep),
+    ):
+        await client._connect_loop(urls)
+
+    assert [url for url, _kwargs in connect_calls] == [
+        urls[0],
+        urls[1],
+        urls[2],
+        urls[0],
+        urls[1],
+    ]
+    assert all(kwargs["max_queue"] == 256 for _url, kwargs in connect_calls)
+    assert client.metrics_snapshot["connection_attempts"] == 5
+
+
 # ---------------------------------------------------------------------------
 # Test 5 — queue full → put_nowait drops with a warning (no crash).
 # ---------------------------------------------------------------------------
@@ -534,6 +573,9 @@ async def test_queue_full_drops_messages_without_crashing() -> None:
         await asyncio.wait_for(client.stop(), timeout=6.0)
 
     assert 0 < len(forwarded) < 50, len(forwarded)
+    dropped_messages = client.metrics_snapshot["dropped_messages"]
+    assert isinstance(dropped_messages, int)
+    assert dropped_messages > 0
 
 
 # ---------------------------------------------------------------------------

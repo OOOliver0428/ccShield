@@ -17,14 +17,53 @@ export type AuthStatusResponse = {
 };
 
 /**
+ * BanEntryResponse
+ *
+ * Stable public shape for one B站 silent-user record.
+ */
+export type BanEntryResponse = {
+    /**
+     * Block Id
+     */
+    block_id: number | null;
+    /**
+     * Uid
+     */
+    uid: number;
+    /**
+     * Uname
+     */
+    uname: string;
+    /**
+     * Hour
+     */
+    hour: number | null;
+    /**
+     * Reason
+     */
+    reason: string;
+    /**
+     * Created At
+     */
+    created_at: number | string | null;
+    /**
+     * Expires At
+     */
+    expires_at: number | string | null;
+    /**
+     * Pending
+     */
+    pending: boolean;
+};
+
+/**
  * BanListResponse
  *
  * Response body for ``GET /api/ban-list/{room_id}``.
  *
- * ``bans`` is a list of arbitrary ban-entry dicts (uid/hour/reason/…)
- * — the B站 payload is heterogeneous per ban type so ``extra="ignore"``
- * keeps the typed surface clean while letting FastAPI serialise
- * whatever the manager / bili_client returned.
+ * Raw B站 aliases are normalized by :mod:`app.room.banlist` before
+ * they cross this boundary, so every browser receives the same typed
+ * fields and can safely gate 解禁 on ``block_id`` / ``pending``.
  */
 export type BanListResponse = {
     /**
@@ -34,9 +73,7 @@ export type BanListResponse = {
     /**
      * Bans
      */
-    bans: Array<{
-        [key: string]: unknown;
-    }>;
+    bans: Array<BanEntryResponse>;
 };
 
 /**
@@ -60,11 +97,15 @@ export type BanRequest = {
     /**
      * Hour
      */
-    hour: number;
+    hour: 0 | 1 | 24 | 168 | 720;
     /**
      * Reason
      */
     reason?: string;
+    /**
+     * Uname
+     */
+    uname?: string;
 };
 
 /**
@@ -122,6 +163,26 @@ export type ManualCookiesRequest = {
  * Response body for ``POST /api/auth/manual`` on success.
  */
 export type ManualCookiesResponse = {
+    /**
+     * Uname
+     */
+    uname: string;
+    /**
+     * Mid
+     */
+    mid: number;
+};
+
+/**
+ * MeResponse
+ *
+ * Response body for ``GET /api/auth/me``.
+ *
+ * Carries the minimal user identity the SPA needs to display after a
+ * successful login (QR or manual). ``uname`` and ``mid`` come from the
+ * ``/x/web-interface/nav`` payload.
+ */
+export type MeResponse = {
     /**
      * Uname
      */
@@ -403,6 +464,22 @@ export type AuthStatusApiAuthStatusGetResponses = {
 
 export type AuthStatusApiAuthStatusGetResponse = AuthStatusApiAuthStatusGetResponses[keyof AuthStatusApiAuthStatusGetResponses];
 
+export type AuthMeApiAuthMeGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/me';
+};
+
+export type AuthMeApiAuthMeGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: MeResponse;
+};
+
+export type AuthMeApiAuthMeGetResponse = AuthMeApiAuthMeGetResponses[keyof AuthMeApiAuthMeGetResponses];
+
 export type ManualCookiesApiAuthManualPostData = {
     body: ManualCookiesRequest;
     path?: never;
@@ -573,7 +650,12 @@ export type GetBanListRouteApiBanListRoomIdGetData = {
          */
         room_id: number;
     };
-    query?: never;
+    query?: {
+        /**
+         * Refresh
+         */
+        refresh?: boolean;
+    };
     url: '/api/ban-list/{room_id}';
 };
 

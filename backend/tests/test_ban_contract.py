@@ -532,7 +532,7 @@ async def test_contract_manager_start_broadcasts_snapshot() -> None:
         assert last_snap["bans"][0]["uid"] == 1
         # Manager state is populated.
         assert 1 in mgr._bans
-        assert mgr._bans[1]["id"] == 101
+        assert mgr._bans[1]["block_id"] == 101
     finally:
         await mgr.stop()
 
@@ -563,10 +563,12 @@ async def test_contract_manager_on_ban_broadcasts_ban_added() -> None:
         msg = added[-1]
         assert msg["event"] == "ban_added"
         assert msg["ban"]["uid"] == 2
-        assert msg["ban"]["id"] == 102
+        assert msg["ban"]["block_id"] == 102
         # Manager state contains the new uid.
         assert 2 in mgr._bans
-        assert mgr._bans[2] == new_entry
+        assert mgr._bans[2]["uid"] == new_entry["uid"]
+        assert mgr._bans[2]["block_id"] == new_entry["id"]
+        assert mgr._bans[2]["pending"] is False
     finally:
         await mgr.stop()
 
@@ -665,7 +667,7 @@ async def test_contract_manager_reconcile_detects_new_uid() -> None:
             "dict[str, dict[str, object]]", added_msgs[-1]
         ).get("ban", {})
         assert last_ban.get("uid") == 3
-        assert last_ban.get("id") == 103
+        assert last_ban.get("block_id") == 103
         assert 3 in mgr._bans
     finally:
         await mgr.stop()

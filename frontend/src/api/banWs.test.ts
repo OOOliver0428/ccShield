@@ -138,14 +138,14 @@ describe("BanlistWS", () => {
     fakeInstances[0]!.simulateMessage(
       JSON.stringify({
         event: "ban_added",
-        ban: { uid: 33, uname: "carol", hour: 1, id: "block-33" },
+        ban: { uid: 33, uname: "carol", hour: 1, block_id: 33 },
       }),
     );
 
     const store = useBanStore();
     expect(store.banList).toHaveLength(1);
     expect(store.banList[0]?.uid).toBe(33);
-    expect(store.banList[0]?.id).toBe("block-33");
+    expect(store.banList[0]?.block_id).toBe(33);
 
     ws.close();
   });

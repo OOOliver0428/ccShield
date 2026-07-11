@@ -23,7 +23,12 @@
  * Bearer``; WS can't set custom headers after construction in a
  * browser, so we fall back to the query string per the spec.
  */
-export type BridgeEventType = "danmaku" | "sc" | "room_status" | "error";
+export type BridgeEventType =
+  | "danmaku"
+  | "sc"
+  | "sc_delete"
+  | "room_status"
+  | "error";
 
 export interface BridgeMessageEvent {
   type: "danmaku";
@@ -37,11 +42,25 @@ export interface BridgeMessageEvent {
 
 export interface BridgeScEvent {
   type: "sc";
+  id: string;
   uid: number;
   uname: string;
   text: string;
   price: number;
   ts: number;
+  end_ts: number;
+  duration: number;
+  guard_level: number;
+  medal: { name: string; level: number } | null;
+  background_color: string;
+  background_bottom_color: string;
+  background_price_color: string;
+  message_font_color: string;
+}
+
+export interface BridgeScDeleteEvent {
+  type: "sc_delete";
+  ids: string[];
 }
 
 export interface BridgeRoomStatusEvent {
@@ -57,6 +76,7 @@ export interface BridgeErrorEvent {
 export type BridgeEvent =
   | BridgeMessageEvent
   | BridgeScEvent
+  | BridgeScDeleteEvent
   | BridgeRoomStatusEvent
   | BridgeErrorEvent;
 

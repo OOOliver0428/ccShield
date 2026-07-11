@@ -26,7 +26,7 @@ Design notes:
   `app.config.settings.BILI_JCT` if not provided at construction. The
   lazy import is intentional: `app.config.py` is owned by T2 (parallel);
   this module must remain importable while T2 is still in flight.
-- `get_ban_list` paginates all pages with a hard cap of 10 to bound work.
+- `get_ban_list` paginates all pages with a high safety cap to bound work.
   It does NOT consult any external room-state (T17 owns that wrapping).
 """
 from __future__ import annotations
@@ -73,7 +73,11 @@ _DEFAULT_HEADERS: dict[str, str] = {
     "Sec-Fetch-Site": "same-site",
 }
 
-_BAN_LIST_MAX_PAGES: int = 10
+# B站 currently returns ten silent-user rows per page. Real rooms can easily
+# exceed the old ten-page cap (room 1601605 reported 21 pages / 201 rows), so
+# keep the runaway-response guard without truncating ordinary moderation
+# lists at 100 rows.
+_BAN_LIST_MAX_PAGES: int = 100
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +184,11 @@ class BilibiliClient:
         """The WBI signer used by `get_danmu_info`."""
         return self._signer
 
+    def get_cookie(self, name: str) -> str | None:
+        """Return one mirrored cookie without exposing the credential map."""
+        value = self._cookies.get(name)
+        return value if value else None
+
     async def close(self) -> None:
         """Close the underlying client.
 
@@ -208,7 +217,14 @@ class BilibiliClient:
                 dict is a no-op (the current state is left intact).
         """
         self._client.cookies.update(cookies)
-        self._cookies = dict(cookies) if cookies else dict(self._cookies)
+        self._cookies.update(cookies)
+        # Write APIs sign their form with the cached CSRF value. A QR or
+        # manual login can replace ``bili_jct`` after this long-lived client
+        # was constructed, so refreshing only the HTTP cookie jar would make
+        # reads succeed while ban/unban still used the stale token.
+        refreshed_csrf = cookies.get("bili_jct")
+        if refreshed_csrf:
+            self._csrf_token = refreshed_csrf
 
     # -----------------------------------------------------------------------
     # Read APIs
@@ -259,6 +275,71 @@ class BilibiliClient:
         body = self._parse_body(response)
         return self._extract_data_or_none(body, "get_room_info")
 
+    async def get_anchor_info(self, uid: int) -> dict[str, Any] | None:
+        """Return the public profile of a live-room anchor.
+
+        ``Room/get_info`` identifies the anchor by uid but does not reliably
+        include their display name. ``Master/info`` supplies that name under
+        ``data.info.uname`` without connecting to the room or its danmaku WS.
+        """
+        url = f"{_LIVE_BASE_URL}/live_user/v1/Master/info"
+        response = await self._client.get(
+            url, params={"uid": uid}, headers=_DEFAULT_HEADERS
+        )
+        body = self._parse_body(response)
+        data = self._extract_data_or_none(body, "get_anchor_info")
+        if not isinstance(data, dict):
+            return None
+        info = data.get("info")
+        return info if isinstance(info, dict) else None
+
+    async def get_active_super_chats(
+        self, room_id: int
+    ) -> list[dict[str, Any]]:
+        """Return SCs that are already active when a room is connected.
+
+        The public WebSocket only guarantees future events. B站's room
+        bootstrap response carries the currently pinned SC cards under
+        ``data.super_chat_info.message_list``; seeding from it prevents a
+        still-active paid message from disappearing merely because this app
+        connected after the purchase event.
+        """
+        url = f"{_LIVE_BASE_URL}/xlive/web-room/v1/index/getInfoByRoom"
+        params = {"room_id": str(room_id)}
+        body: dict[str, Any] = {}
+        for attempt in range(2):
+            signed = await self._signer.sign(self._client, params)
+            response = await self._client.get(
+                url, params=signed, headers=_DEFAULT_HEADERS
+            )
+            body = self._parse_body(response)
+            code = body.get("code", -1)
+            if code == 0:
+                break
+            if code == -352 and attempt == 0:
+                logger.warning(
+                    "get_active_super_chats: -352, refreshing WBI keys"
+                )
+                self._signer.last_update = 0.0
+                continue
+            logger.warning(
+                "get_active_super_chats: code={} msg={}",
+                code,
+                body.get("message"),
+            )
+            return []
+
+        data = self._extract_data_or_none(body, "get_active_super_chats")
+        if not isinstance(data, dict):
+            return []
+        super_chat_info = data.get("super_chat_info")
+        if not isinstance(super_chat_info, dict):
+            return []
+        message_list = super_chat_info.get("message_list")
+        if not isinstance(message_list, list):
+            return []
+        return [item for item in message_list if isinstance(item, dict)]
+
     async def resolve_room_id(
         self, input_id: int
     ) -> dict[str, Any] | None:
@@ -278,13 +359,28 @@ class BilibiliClient:
         if isinstance(room_info, dict) and room_info.get("room_id"):
             init = await self.get_room_init(input_id)
             uid = init.get("uid") if isinstance(init, dict) else None
+            if not isinstance(uid, int):
+                uid = room_info.get("uid")
             short_id = (
                 init.get("short_id", 0) if isinstance(init, dict) else 0
             )
+            uname = room_info.get("uname")
+            if not isinstance(uname, str) or not uname.strip():
+                anchor_info = (
+                    await self.get_anchor_info(uid)
+                    if isinstance(uid, int) and uid > 0
+                    else None
+                )
+                uname = (
+                    anchor_info.get("uname", "")
+                    if isinstance(anchor_info, dict)
+                    else ""
+                )
             return {
                 **room_info,
                 "uid": uid,
                 "short_id": short_id,
+                "uname": uname if isinstance(uname, str) else "",
                 "is_short_id": False,
             }
 
@@ -296,10 +392,26 @@ class BilibiliClient:
         real_room_id = init["room_id"]
         full_info = await self.get_room_info(real_room_id)
         if full_info:
+            uid = init.get("uid")
+            if not isinstance(uid, int):
+                uid = full_info.get("uid")
+            uname = full_info.get("uname")
+            if not isinstance(uname, str) or not uname.strip():
+                anchor_info = (
+                    await self.get_anchor_info(uid)
+                    if isinstance(uid, int) and uid > 0
+                    else None
+                )
+                uname = (
+                    anchor_info.get("uname", "")
+                    if isinstance(anchor_info, dict)
+                    else ""
+                )
             return {
                 **full_info,
-                "uid": init.get("uid"),
+                "uid": uid,
                 "short_id": init.get("short_id", 0),
+                "uname": uname if isinstance(uname, str) else "",
                 "is_short_id": True,
                 "input_id": input_id,
             }
@@ -453,7 +565,8 @@ class BilibiliClient:
 
         Args:
             room_id: real room id.
-            page_size: items per page (B站 uses `ps` field).
+            page_size: retained for API compatibility. This endpoint fixes
+                the page size server-side; its `ps` field is the page number.
             is_running: optional callback invoked once per page; if it
                 returns False, pagination stops. Wired by T17 (which owns
                 banlist) — kept optional so the MVP stays simple.
@@ -529,6 +642,16 @@ class BilibiliClient:
             )
 
             if current_page >= total_page or len(collected) >= total:
+                break
+            if current_page >= _BAN_LIST_MAX_PAGES:
+                logger.warning(
+                    "get_ban_list: truncating room={} at safety cap={} "
+                    "reported_total_page={} reported_total={}",
+                    room_id,
+                    _BAN_LIST_MAX_PAGES,
+                    total_page,
+                    total,
+                )
                 break
             current_page += 1
 

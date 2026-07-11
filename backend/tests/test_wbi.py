@@ -306,6 +306,31 @@ def test_wbi_signer_raises_when_keys_unavailable() -> None:
         asyncio.run(inner.aclose())
 
 
+def test_wbi_signer_accepts_public_keys_from_anonymous_nav() -> None:
+    """Anonymous nav is code=-101 but can still carry usable WBI keys."""
+    import asyncio
+
+    signer = WbiSigner()
+    transport = _make_handler(
+        {
+            "code": -101,
+            "message": "not logged in",
+            "data": {
+                "isLogin": False,
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/" + IMG_KEY + ".png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/" + SUB_KEY + ".png",
+                },
+            },
+        }
+    )
+    inner = httpx.AsyncClient(transport=transport)
+    try:
+        assert asyncio.run(signer.get_keys(inner)) == (IMG_KEY, SUB_KEY)
+    finally:
+        asyncio.run(inner.aclose())
+
+
 def test_wbi_signer_raises_on_unexpected_payload_shape() -> None:
     """Missing wbi_img key must surface an exception (not silently return None)."""
     import asyncio

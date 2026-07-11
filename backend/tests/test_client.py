@@ -96,6 +96,55 @@ def test_get_user_info_returns_none_on_minus_101_for_auth_check() -> None:
     assert run(client.get_user_info()) is None
 
 
+def test_get_active_super_chats_extracts_room_bootstrap_list() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(
+                200,
+                json={
+                    "code": -101,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": (
+                                "https://i.example/"
+                                "0123456789abcdef0123456789abcdef.png"
+                            ),
+                            "sub_url": (
+                                "https://i.example/"
+                                "fedcba9876543210fedcba9876543210.png"
+                            ),
+                        }
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "super_chat_info": {
+                        "message_list": [
+                            {"id": 1, "message": "active"},
+                            "malformed",
+                        ]
+                    }
+                },
+            },
+        )
+
+    client = make_client(handler)
+    result = run(client.get_active_super_chats(24696014))
+    assert result == [{"id": 1, "message": "active"}]
+    request = captured[-1]
+    assert request.url.path.endswith("/getInfoByRoom")
+    assert request.url.params["room_id"] == "24696014"
+    assert "w_rid" in request.url.params
+    assert "wts" in request.url.params
+
+
 def test_close_closes_injected_client() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"code": -101, "message": "x"})
@@ -134,6 +183,7 @@ def test_update_cookies_sets_sessdata_in_underlying_httpx_jar() -> None:
 
     assert client.http.cookies.get("SESSDATA") == "new"
     assert client.http.cookies.get("bili_jct") == "jct-new"
+    assert client.csrf_token == "jct-new"
 
 
 def test_update_cookies_overwrites_existing_values() -> None:
@@ -171,6 +221,7 @@ def test_update_cookies_preserves_unrelated_keys() -> None:
     assert client.http.cookies.get("bili_jct") == "j"
     assert client.http.cookies.get("buvid3") == "b"
     assert client.http.cookies.get("SESSDATA") == "a2"
+    assert client.get_cookie("buvid3") == "b"
 
 
 def test_update_cookies_with_empty_dict_is_noop() -> None:
@@ -235,6 +286,78 @@ def test_get_room_info_returns_data_without_extra_anchor_name_fetch() -> None:
     assert data is not None
     assert data["room_id"] == 22210347
     assert call_count["n"] == 1  # no double-fetch
+
+
+def test_get_anchor_info_returns_public_uname() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/live_user/v1/Master/info")
+        assert request.url.params.get("uid") == "999"
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {"info": {"uid": 999, "uname": "anchor-name"}},
+            },
+        )
+
+    client = make_client(handler)
+    info = run(client.get_anchor_info(999))
+
+    assert info == {"uid": 999, "uname": "anchor-name"}
+
+
+def test_resolve_room_id_enriches_missing_anchor_name() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path.endswith("/room/v1/Room/get_info"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "room_id": 1601605,
+                        "title": "Live title",
+                        "uid": 999,
+                        "live_status": 1,
+                    },
+                },
+            )
+        if request.url.path.endswith("/room/v1/Room/room_init"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "room_id": 1601605,
+                        "short_id": 0,
+                        "uid": 999,
+                    },
+                },
+            )
+        if request.url.path.endswith("/live_user/v1/Master/info"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {"info": {"uid": 999, "uname": "主播名"}},
+                },
+            )
+        return httpx.Response(404)
+
+    client = make_client(handler)
+    info = run(client.resolve_room_id(1601605))
+
+    assert info is not None
+    assert info["room_id"] == 1601605
+    assert info["title"] == "Live title"
+    assert info["uname"] == "主播名"
+    assert seen_paths == [
+        "/room/v1/Room/get_info",
+        "/room/v1/Room/room_init",
+        "/live_user/v1/Master/info",
+    ]
 
 
 def test_resolve_room_id_with_real_id() -> None:
@@ -602,7 +725,7 @@ def test_get_ban_list_minus_101_raises_auth_expired() -> None:
 
 
 def test_get_ban_list_caps_at_max_pages() -> None:
-    """Safeguard: even if server reports total_page=999, cap at 10."""
+    """Safeguard: even if server reports total_page=999, cap at 100."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         # Always return a non-empty page so loop continues.
@@ -610,5 +733,25 @@ def test_get_ban_list_caps_at_max_pages() -> None:
 
     client = make_client(handler)
     bans = run(client.get_ban_list(22210347))
-    # At most 10 page requests' worth of items.
-    assert len(bans) <= 10
+    # At most 100 page requests' worth of items.
+    assert len(bans) == 100
+
+
+def test_get_ban_list_does_not_truncate_a_21_page_room() -> None:
+    """Regression: a real 201-entry room spans 21 server-sized pages."""
+    seen_pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.content.decode().split("ps=")[1].split("&")[0])
+        seen_pages.append(page)
+        per_page = 1 if page == 21 else 10
+        return httpx.Response(
+            200,
+            json=_ban_list_payload(page, per_page, 21, 201),
+        )
+
+    client = make_client(handler)
+    bans = run(client.get_ban_list(1601605))
+
+    assert seen_pages == list(range(1, 22))
+    assert len(bans) == 201

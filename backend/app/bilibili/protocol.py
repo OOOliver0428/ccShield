@@ -4,7 +4,7 @@ Header (16 bytes, big-endian)::
 
     >IHHII  total_length  header_length=16  proto_ver  packet_type  sequence=1
 
-- proto_ver: 1=raw JSON, 2=zlib, 3=brotli.
+- proto_ver: 0=plain NORMAL JSON, 1=raw auth/heartbeat, 2=zlib, 3=brotli.
 - packet_type: 2=HEARTBEAT, 3=HEARTBEAT_RSP, 5=NORMAL, 7=AUTH, 8=AUTH_RSP.
 - A single TCP frame may contain MULTIPLE packets concatenated. A single
   decompressed NORMAL payload may also contain MULTIPLE nested sub-frames
@@ -37,7 +37,9 @@ NORMAL: int = 5
 AUTH: int = 7
 AUTH_RSP: int = 8
 
-# Protocol versions.
+# Protocol versions. Bilibili uses both 0 and 1 for uncompressed bodies:
+# NORMAL JSON sub-frames commonly use 0, while AUTH/heartbeat use 1.
+PLAIN: int = 0
 RAW: int = 1
 ZLIB: int = 2
 BROTLI: int = 3
@@ -54,7 +56,7 @@ def pack_data(data: bytes, packet_type: int, proto_ver: int = RAW) -> bytes:
     Args:
         data: Payload bytes (already encoded JSON / already compressed).
         packet_type: One of HEARTBEAT / HEARTBEAT_RSP / NORMAL / AUTH / AUTH_RSP.
-        proto_ver: One of RAW / ZLIB / BROTLI. Defaults to RAW.
+        proto_ver: One of PLAIN / RAW / ZLIB / BROTLI. Defaults to RAW.
 
     Returns:
         header (16 bytes) + payload.
@@ -121,7 +123,7 @@ def unpack_data(data: bytes) -> list[dict]:
             except brotli.error:
                 offset = next_offset
                 continue
-        elif proto_ver != RAW:
+        elif proto_ver not in (PLAIN, RAW):
             # Unknown proto version — be conservative and skip the packet.
             offset = next_offset
             continue

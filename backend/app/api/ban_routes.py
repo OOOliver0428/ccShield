@@ -43,7 +43,8 @@ preferred where the banlist wire format is heterogeneous.
 """
 from __future__ import annotations
 
-from typing import cast
+import time
+from typing import Literal, cast
 
 from fastapi import (
     APIRouter,
@@ -64,8 +65,11 @@ from app.bilibili.exceptions import (
     RateLimitedError,
 )
 from app.room.banlist import (
+    BanEntry,
     BanListManager,
     BanListMessage,
+    BanTimestamp,
+    normalize_ban_entry,
     set_banlist_manager,
 )
 
@@ -91,6 +95,12 @@ def _get_bili_client() -> BilibiliClient:
     global _bili_client
     if _bili_client is None:
         _bili_client = BilibiliClient()
+    # QR/manual login mutates settings after this singleton may already have
+    # been constructed. Refresh both the cookie jar and the cached CSRF token
+    # before every moderation read/write.
+    from app.config import settings
+
+    _bili_client.update_cookies(dict(settings.cookies))
     return _bili_client
 
 
@@ -117,8 +127,9 @@ class BanRequest(BaseModel):
 
     room_id: int = Field(gt=0)
     uid: int = Field(gt=0)
-    hour: int
-    reason: str = ""
+    hour: Literal[0, 1, 24, 168, 720]
+    reason: str = Field(default="", max_length=200)
+    uname: str = Field(default="", max_length=100)
 
 
 class UnbanRequest(BaseModel):
@@ -131,19 +142,33 @@ class UnbanRequest(BaseModel):
     uid: int = Field(gt=0)
 
 
+class BanEntryResponse(BaseModel):
+    """Stable public shape for one B站 silent-user record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: int | None
+    uid: int
+    uname: str
+    hour: int | None
+    reason: str
+    created_at: BanTimestamp
+    expires_at: BanTimestamp
+    pending: bool
+
+
 class BanListResponse(BaseModel):
     """Response body for ``GET /api/ban-list/{room_id}``.
 
-    ``bans`` is a list of arbitrary ban-entry dicts (uid/hour/reason/…)
-    — the B站 payload is heterogeneous per ban type so ``extra="ignore"``
-    keeps the typed surface clean while letting FastAPI serialise
-    whatever the manager / bili_client returned.
+    Raw B站 aliases are normalized by :mod:`app.room.banlist` before
+    they cross this boundary, so every browser receives the same typed
+    fields and can safely gate 解禁 on ``block_id`` / ``pending``.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     room_id: int
-    bans: list[dict[str, object]]
+    bans: list[BanEntryResponse]
 
 
 class OkResponse(BaseModel):
@@ -231,15 +256,45 @@ async def post_ban_route(body: BanRequest) -> OkResponse:
         banlist_manager is not None
         and banlist_manager._room_id == body.room_id
     ):
-        await banlist_manager.on_ban(
-            body.uid,
+        created_at = int(time.time())
+        pending_entry = normalize_ban_entry(
             {
                 "uid": body.uid,
+                "uname": body.uname,
                 "hour": body.hour,
                 "reason": body.reason,
-                "room_id": body.room_id,
+                "created_at": created_at,
             },
+            pending=True,
         )
+        assert pending_entry is not None
+        await banlist_manager.on_ban(
+            body.uid,
+            pending_entry,
+        )
+        # Best-effort immediate reconciliation supplies the B站 block id.
+        # The write already succeeded, so a transient read failure must not
+        # turn the POST into a false failure; the pending row remains visible
+        # and the periodic/manual refresh can complete it later.
+        try:
+            await banlist_manager.refresh()
+        except AuthExpiredError as exc:
+            await auth_session_module.auth_session.handle_auth_expired()
+            logger.warning(
+                "ban_routes: post-ban refresh found expired auth room={} "
+                "uid={} err={!r}",
+                body.room_id,
+                body.uid,
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ban_routes: post-ban list refresh failed room={} uid={} "
+                "err={!r}",
+                body.room_id,
+                body.uid,
+                exc,
+            )
 
     return OkResponse(ok=True)
 
@@ -284,7 +339,9 @@ async def delete_ban_route(body: UnbanRequest) -> OkResponse:
     response_model=BanListResponse,
     summary="Read the current ban list for a room",
 )
-async def get_ban_list_route(room_id: int) -> BanListResponse:
+async def get_ban_list_route(
+    room_id: int, *, refresh: bool = False
+) -> BanListResponse:
     """Return the ban list for ``room_id``.
 
     Reads from the running :class:`BanListManager`'s local state when
@@ -295,20 +352,55 @@ async def get_ban_list_route(room_id: int) -> BanListResponse:
     """
     auth_session_module.auth_session.require_authenticated()
 
-    if banlist_manager is not None and banlist_manager._room_id == room_id:
-        entries: list[dict[str, object]] = [
-            cast(dict[str, object], entry)
-            for entry in banlist_manager._bans.values()
-        ]
-    else:
-        bili: BilibiliClient = _get_bili_client()
-        fetched: list[dict[str, object]] = [
-            cast(dict[str, object], e)
-            for e in await bili.get_ban_list(room_id)
-        ]
-        entries = fetched
+    try:
+        if banlist_manager is not None and banlist_manager._room_id == room_id:
+            if refresh:
+                # The manager owns the same process-wide client in production.
+                # Touch the factory before an upstream refresh so QR/manual
+                # logins made after manager construction update its cookie jar
+                # and CSRF token as well.
+                _get_bili_client()
+                entries: list[BanEntry] = await banlist_manager.refresh()
+            else:
+                entries = []
+                for cached in banlist_manager._bans.values():
+                    normalized = normalize_ban_entry(
+                        cast("dict[str, object]", cached),
+                        pending=cached.get("pending") is True,
+                    )
+                    if normalized is not None:
+                        entries.append(normalized)
+        else:
+            bili: BilibiliClient = _get_bili_client()
+            raw_entries = await bili.get_ban_list(room_id)
+            entries = []
+            for raw in raw_entries:
+                if not isinstance(raw, dict):
+                    continue
+                normalized = normalize_ban_entry(
+                    cast("dict[str, object]", raw)
+                )
+                if normalized is not None:
+                    entries.append(normalized)
+    except BiliApiError as exc:
+        if isinstance(exc, AuthExpiredError):
+            await auth_session_module.auth_session.handle_auth_expired()
+        raise _http_for_bili_error(exc) from exc
 
-    return BanListResponse(room_id=room_id, bans=entries)
+    return BanListResponse(
+        room_id=room_id,
+        bans=[BanEntryResponse.model_validate(entry) for entry in entries],
+    )
+
+
+async def stop_banlist_manager() -> None:
+    """Stop and clear the active single-room ban-list manager."""
+    global banlist_manager
+    manager = banlist_manager
+    banlist_manager = None
+    set_banlist_manager(None)
+    if manager is not None:
+        await manager.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +480,7 @@ async def ws_banlist_route(websocket: WebSocket, room_id: int) -> None:
 
 
 __all__ = [
+    "BanEntryResponse",
     "BanListResponse",
     "BanRequest",
     "OkResponse",
@@ -395,4 +488,5 @@ __all__ = [
     "_get_bili_client",
     "banlist_manager",
     "router",
+    "stop_banlist_manager",
 ]

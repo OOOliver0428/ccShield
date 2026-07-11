@@ -14,11 +14,11 @@ describe("GuardBadge.vue", () => {
     expect(wrapper.find('[data-testid="guard-badge"]').exists()).toBe(false);
   });
 
-  it("renders 舰长 for level=1", () => {
+  it("renders 总督 for level=1", () => {
     const wrapper = mount(GuardBadge, { props: { level: 1 } });
     const badge = wrapper.find('[data-testid="guard-badge"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe("舰长");
+    expect(badge.text()).toBe("总督");
   });
 
   it("renders 提督 for level=2", () => {
@@ -28,10 +28,10 @@ describe("GuardBadge.vue", () => {
     expect(badge.text()).toBe("提督");
   });
 
-  it("renders 总督 for level=3", () => {
+  it("renders 舰长 for level=3", () => {
     const wrapper = mount(GuardBadge, { props: { level: 3 } });
     const badge = wrapper.find('[data-testid="guard-badge"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe("总督");
+    expect(badge.text()).toBe("舰长");
   });
 });

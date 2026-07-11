@@ -1,7 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
+import { http, HttpResponse } from "msw";
+import { server } from "../__tests__/setup";
+import { useBanStore } from "../stores/ban";
 import { useDanmakuStore } from "../stores/danmaku";
+import { useRoomStore } from "../stores/room";
 import DanmakuList from "./DanmakuList.vue";
 
 function makeDanmaku(uid: number, text: string, extras: Record<string, unknown> = {}) {
@@ -18,19 +22,33 @@ function makeDanmaku(uid: number, text: string, extras: Record<string, unknown> 
 }
 
 function makeSc(uid: number, text: string, price: number) {
+  const now = Math.floor(Date.now() / 1000);
   return {
     type: "sc" as const,
+    id: `sc-${uid}`,
     uid,
     uname: `user${uid}`,
     text,
     price,
-    ts: 1_700_000_000,
+    ts: now,
+    end_ts: now + 300,
+    duration: 300,
+    guard_level: 0,
+    medal: null,
+    background_color: "#EDF5FF",
+    background_bottom_color: "#2A60B2",
+    background_price_color: "#7497CD",
+    message_font_color: "#24476B",
   };
 }
 
 describe("DanmakuList.vue", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("renders uname + text from the danmaku list", () => {
@@ -44,14 +62,14 @@ describe("DanmakuList.vue", () => {
     expect(rows[0]!.text()).toContain("hello world");
   });
 
-  it("renders GuardBadge with 总督 for guard_level=3", () => {
+  it("renders GuardBadge with 舰长 for guard_level=3", () => {
     const store = useDanmakuStore();
     store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 3 }));
 
     const wrapper = mount(DanmakuList);
     const badge = wrapper.find('[data-testid="guard-badge"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe("总督");
+    expect(badge.text()).toBe("舰长");
     expect(wrapper.text()).not.toContain("[guard3]");
   });
 
@@ -63,12 +81,12 @@ describe("DanmakuList.vue", () => {
     expect(wrapper.find('[data-testid="guard-badge"]').text()).toBe("提督");
   });
 
-  it("renders GuardBadge with 舰长 for guard_level=1", () => {
+  it("renders GuardBadge with 总督 for guard_level=1", () => {
     const store = useDanmakuStore();
     store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 1 }));
 
     const wrapper = mount(DanmakuList);
-    expect(wrapper.find('[data-testid="guard-badge"]').text()).toBe("舰长");
+    expect(wrapper.find('[data-testid="guard-badge"]').text()).toBe("总督");
   });
 
   it("does NOT render a guard badge for guard_level=0", () => {
@@ -108,6 +126,7 @@ describe("DanmakuList.vue", () => {
     const wrapper = mount(DanmakuList);
     const scRow = wrapper.find('[data-testid="sc-row"]');
     expect(scRow.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="sc-panel"]').exists()).toBe(true);
     const price = wrapper.find('[data-testid="sc-price"]');
     expect(price.exists()).toBe(true);
     expect(price.text()).toBe("¥500");
@@ -135,6 +154,96 @@ describe("DanmakuList.vue", () => {
     expect(wrapper.find('[data-testid="empty"]').exists()).toBe(true);
     expect(store.list).toHaveLength(0);
     expect(store.scList).toHaveLength(0);
+  });
+
+  it("quick 本场禁言 confirms evidence and POSTs hour=0", async () => {
+    const room = useRoomStore();
+    room.currentRoomId = 12345;
+    const danmaku = useDanmakuStore();
+    danmaku.addDanmaku(makeDanmaku(7, "重复刷屏内容"));
+    let postedBody: unknown = null;
+    server.use(
+      http.post("*/api/ban", async ({ request }) => {
+        postedBody = await request.json();
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const wrapper = mount(DanmakuList);
+    await wrapper.find('[data-testid="quick-ban-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("用户：user7 (uid:7)"),
+    );
+    expect(confirm.mock.calls[0]?.[0]).toContain("发言：重复刷屏内容");
+    expect(confirm.mock.calls[0]?.[0]).toContain("期限：本场直播");
+    expect(postedBody).toEqual({
+      room_id: 12345,
+      uid: 7,
+      uname: "user7",
+      hour: 0,
+      reason: "",
+    });
+    const banStore = useBanStore();
+    expect(banStore.banList[0]).toMatchObject({
+      uid: 7,
+      hour: 0,
+      pending: true,
+      block_id: null,
+    });
+  });
+
+  it("quick 本场禁言 cancel never calls the backend", async () => {
+    const room = useRoomStore();
+    room.currentRoomId = 12345;
+    const danmaku = useDanmakuStore();
+    danmaku.addDanmaku(makeDanmaku(8, "cancel me"));
+    let calls = 0;
+    server.use(
+      http.post("*/api/ban", () => {
+        calls += 1;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const wrapper = mount(DanmakuList);
+    await wrapper.find('[data-testid="quick-ban-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(calls).toBe(0);
+    expect(useBanStore().isSubmitting(8)).toBe(false);
+  });
+
+  it("locks both moderation buttons while the same uid is submitting", () => {
+    const danmaku = useDanmakuStore();
+    danmaku.addDanmaku(makeDanmaku(18, "locked"));
+    const banStore = useBanStore();
+    expect(banStore.beginSubmission(18)).toBe(true);
+
+    const wrapper = mount(DanmakuList);
+
+    expect(
+      wrapper.find('[data-testid="quick-ban-btn"]').attributes("disabled"),
+    ).toBeDefined();
+    expect(
+      wrapper.find('[data-testid="more-ban-btn"]').attributes("disabled"),
+    ).toBeDefined();
+  });
+
+  it("more 禁言 opens one shared panel with the selected message", async () => {
+    const store = useDanmakuStore();
+    store.addDanmaku(makeDanmaku(9, "evidence text"));
+    const wrapper = mount(DanmakuList);
+
+    await wrapper.find('[data-testid="more-ban-btn"]').trigger("click");
+
+    const panel = wrapper.find('[data-testid="ban-panel"]');
+    expect(panel.exists()).toBe(true);
+    expect(panel.text()).toContain("user9");
+    expect(panel.findAll('[data-testid="duration-option"]')).toHaveLength(5);
   });
 
   it("auto-scrolls to the bottom on new danmaku when pinned", async () => {

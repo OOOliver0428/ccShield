@@ -41,22 +41,22 @@ const hasMedal = computed(() => props.medal !== null);
 .medal {
   display: inline-flex;
   align-items: stretch;
-  border-radius: 4px;
+  border-radius: 5px;
   overflow: hidden;
-  font-size: 11px;
-  line-height: 1.6;
+  font-size: 9px;
+  line-height: 1.45;
   user-select: none;
-  border: 1px solid var(--el-color-primary-light-5, #409eff);
+  border: 1px solid rgb(124 140 255 / 42%);
 }
 .medal-name {
-  padding: 0 6px;
-  background: var(--el-color-primary-light-9, #ecf5ff);
-  color: var(--el-color-primary-dark-2, #337ecc);
-  font-weight: 500;
+  padding: 1px 5px;
+  background: var(--cc-primary-soft);
+  color: var(--cc-primary-emphasis);
+  font-weight: 560;
 }
 .medal-level {
-  padding: 0 5px;
-  background: var(--el-color-primary, #409eff);
+  padding: 1px 4px;
+  background: rgb(124 140 255 / 42%);
   color: #fff;
   font-weight: 700;
   font-variant-numeric: tabular-nums;

@@ -202,6 +202,26 @@ async def start_room_route(body: StartRoomRequest) -> StartRoomResponse:
     singleton bridge is NOT installed in that case — a failed start
     must not leave a half-wired bridge behind.
     """
+    # Ban-list reconciliation is scoped to the active room. Stop it before
+    # replacing the room bridge so no stale task can fetch or push entries
+    # from the previous room during the switch.
+    from app.api.ban_routes import stop_banlist_manager
+
+    await stop_banlist_manager()
+
+    previous = get_room_bridge()
+    if previous is not None:
+        try:
+            await previous.room_session.disconnect()
+        except Exception as exc:
+            logger.exception(
+                "room_routes.start_room_route: previous disconnect failed: {!r}",
+                exc,
+            )
+        finally:
+            await previous.close()
+            set_room_bridge(None)
+
     bili: BilibiliClient = _get_bili_client()
     session: RoomSession = await _make_room_session(bili)
 
@@ -214,7 +234,13 @@ async def start_room_route(body: StartRoomRequest) -> StartRoomResponse:
 
     bridge: RoomBridge = await RoomBridge.create(session)
     set_room_bridge(bridge)
-    return StartRoomResponse(room_id=body.room_id, title="")
+    # RoomSession resolves short ids before it constructs the Bilibili WS.
+    # Return that canonical id so the browser connects to the same bridge.
+    resolved_room_id = getattr(session, "room_id", None)
+    connected_room_id = (
+        resolved_room_id if isinstance(resolved_room_id, int) else body.room_id
+    )
+    return StartRoomResponse(room_id=connected_room_id, title="")
 
 
 @router.post(
@@ -228,6 +254,8 @@ async def stop_room_route() -> StopRoomResponse:
     Idempotent: with no active bridge the call is a no-op and still
     returns ``{ok: true}``.
     """
+    from app.api.ban_routes import stop_banlist_manager
+
     bridge: RoomBridge | None = get_room_bridge()
     if bridge is not None:
         try:
@@ -239,7 +267,10 @@ async def stop_room_route() -> StopRoomResponse:
             logger.exception(
                 "room_routes.stop_room_route: disconnect failed: {!r}", exc
             )
-        set_room_bridge(None)
+        finally:
+            await bridge.close()
+            set_room_bridge(None)
+    await stop_banlist_manager()
     return StopRoomResponse(ok=True)
 
 

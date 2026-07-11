@@ -15,6 +15,7 @@ import { server } from "./__tests__/setup";
 import { useAuthStore } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
 import { useBanStore } from "./stores/ban";
+import { useDanmakuStore } from "./stores/danmaku";
 import App from "./App.vue";
 import QrLogin from "./components/QrLogin.vue";
 
@@ -126,6 +127,12 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
 
     const room = useRoomStore();
     await room.resolve("22210347");
+    await flushPromises();
+
+    // Resolving only translates the id; /rooms/start has not installed a
+    // backend RoomBridge yet, so neither local WS may open at this point.
+    expect(fakeInstances).toHaveLength(0);
+
     await room.connect(22210347);
     await flushPromises();
 
@@ -167,6 +174,68 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(true);
+  });
+
+  it("routes active SC and delete events into the pinned block", async () => {
+    server.use(
+      http.post("*/api/rooms/start", () =>
+        HttpResponse.json({ room_id: 22210347, title: "" }),
+      ),
+      http.post("*/api/rooms/stop", () => HttpResponse.json({ ok: true })),
+      http.get("*/api/rooms/resolve", () =>
+        HttpResponse.json({ room_id: 22210347, short_id: 22210347 }),
+      ),
+    );
+
+    const auth = useAuthStore();
+    auth.status = "authenticated";
+    auth.token = "local-tok";
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const room = useRoomStore();
+    await room.resolve("22210347");
+    await room.connect(22210347);
+    await flushPromises();
+
+    const bridgeWs = fakeInstances.find(
+      (w) =>
+        w.url.includes("/api/ws/rooms/22210347?") &&
+        !w.url.includes("/banlist"),
+    );
+    expect(bridgeWs).toBeDefined();
+    const now = Math.floor(Date.now() / 1000);
+    bridgeWs!.simulateMessage(
+      JSON.stringify({
+        type: "sc",
+        id: "sc-live",
+        uid: 7,
+        uname: "supporter",
+        text: "醒目留言内容",
+        price: 100,
+        ts: now,
+        end_ts: now + 300,
+        duration: 300,
+        guard_level: 3,
+        medal: null,
+        background_color: "#EDF5FF",
+        background_bottom_color: "#2A60B2",
+        background_price_color: "#7497CD",
+        message_font_color: "#24476B",
+      }),
+    );
+    await flushPromises();
+
+    expect(useDanmakuStore().scList).toHaveLength(1);
+    expect(wrapper.find('[data-testid="sc-panel"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("醒目留言内容");
+
+    bridgeWs!.simulateMessage(
+      JSON.stringify({ type: "sc_delete", ids: ["sc-live"] }),
+    );
+    await flushPromises();
+    expect(useDanmakuStore().scList).toHaveLength(0);
+    expect(wrapper.find('[data-testid="sc-panel"]').exists()).toBe(false);
   });
 
   it("banlist snapshot → banStore is populated (WS-driven, no polling)", async () => {

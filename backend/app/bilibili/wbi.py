@@ -140,8 +140,8 @@ class WbiSigner:
             logger.error("WBI nav request failed: {}", exc)
             return self._fallback_to_cached()
 
-        if not isinstance(data, dict) or data.get("code") != 0:
-            logger.error("WBI nav returned non-zero: {}", data)
+        if not isinstance(data, dict):
+            logger.error("WBI nav returned an invalid payload: {}", data)
             return self._fallback_to_cached()
 
         payload = data.get("data") or {}
@@ -149,8 +149,20 @@ class WbiSigner:
         img_url = wbi_img.get("img_url")
         sub_url = wbi_img.get("sub_url")
         if not isinstance(img_url, str) or not isinstance(sub_url, str):
+            if data.get("code") != 0:
+                logger.error("WBI nav returned non-zero without keys: {}", data)
+                return self._fallback_to_cached()
             raise RuntimeError(
                 "WBI nav response missing wbi_img.img_url or wbi_img.sub_url"
+            )
+
+        # Bilibili returns code=-101 to anonymous callers while still placing
+        # valid public WBI keys in data.wbi_img. Key extraction is independent
+        # of login state, so use a structurally valid pair even on that code.
+        if data.get("code") != 0:
+            logger.debug(
+                "WBI nav code={} but usable public keys were present",
+                data.get("code"),
             )
 
         self._img_key = img_url.split("/")[-1].split(".")[0]

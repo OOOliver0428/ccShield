@@ -97,7 +97,7 @@ def _pack_auth_rsp(body: dict[str, object]) -> bytes:
 #   info[2]    — [uid, uname, is_admin, is_vip, ...]
 #   info[3]    — [medal_level, medal_name, anchor_uname, ...] (B站 order)
 #   info[4..6] — B站-specific extras (room flags etc.)
-#   info[7]    — guard_level (0=none, 1=舰长, 2=提督, 3=总督)
+#   info[7]    — guard_level (0=none, 1=总督, 2=提督, 3=舰长)
 _DANMU_INFO_FULL: list[object] = [
     [0, 0, 0, 0, 1700000000, 0],  # info[0][4] = 1700000000 (ts)
     "hello world",                  # info[1] = text
@@ -106,7 +106,7 @@ _DANMU_INFO_FULL: list[object] = [
     [],                             # info[4] — empty list (B站 default)
     0,                              # info[5]
     0,                              # info[6]
-    3,                              # info[7] = guard_level (3 = 总督)
+    3,                              # info[7] = guard_level (3 = 舰长)
 ]
 
 DANMU_MSG_PAYLOAD: dict[str, object] = {
@@ -117,11 +117,18 @@ DANMU_MSG_PAYLOAD: dict[str, object] = {
 SUPER_CHAT_PAYLOAD: dict[str, object] = {
     "cmd": "SUPER_CHAT_MESSAGE",
     "data": {
+        "id": 7788,
         "uid": 456,
-        "user_info": {"uname": "bob"},
+        "user_info": {"uname": "bob", "guard_level": 3},
         "message": "support",
         "price": 50,
         "start_time": 1700000001,
+        "end_time": 1700000121,
+        "time": 120,
+        "background_color": "#EDF5FF",
+        "background_bottom_color": "#2A60B2",
+        "background_price_color": "#7497CD",
+        "message_font_color": "#24476B",
     },
 }
 
@@ -160,7 +167,7 @@ def test_contract_normal_json_danmu_msg() -> None:
     assert event.uname == "alice"
     assert event.text == "hello world"
     assert event.ts == 1700000000
-    assert event.guard_level == 3  # 总督
+    assert event.guard_level == 3  # 舰长
     assert isinstance(event.medal, Medal)
     assert event.medal.name == "粉丝团"
     assert event.medal.level == 5
@@ -201,6 +208,10 @@ def test_contract_brotli_super_chat_message() -> None:
     assert event.text == "support"
     assert event.price == 50
     assert event.ts == 1700000001
+    assert event.id == "7788"
+    assert event.end_ts == 1700000121
+    assert event.duration == 120
+    assert event.guard_level == 3
 
 
 # ---------------------------------------------------------------------------

@@ -43,8 +43,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from loguru import logger
 
@@ -58,18 +59,161 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+BanTimestamp = int | str | None
+
+
+class BanEntry(TypedDict):
+    """Stable ban-list shape shared by REST, WS and the frontend."""
+
+    block_id: int | None
+    uid: int
+    uname: str
+    hour: int | None
+    reason: str
+    created_at: BanTimestamp
+    expires_at: BanTimestamp
+    pending: bool
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+    return None
+
+
+def _as_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _as_timestamp(value: object) -> BanTimestamp:
+    numeric = _as_int(value)
+    if numeric is not None:
+        return numeric
+    text = _as_text(value)
+    return text or None
+
+
+def _duration_hours(
+    created_at: BanTimestamp,
+    expires_at: BanTimestamp,
+) -> int | None:
+    """Derive a display duration from B站's start/end timestamps."""
+    if isinstance(expires_at, str):
+        label = expires_at.strip()
+        if label == "永久":
+            return -1
+        if label in {"本场", "本场直播"}:
+            return 0
+
+    if isinstance(created_at, int) and isinstance(expires_at, int):
+        seconds = expires_at - created_at
+    elif isinstance(created_at, str) and isinstance(expires_at, str):
+        try:
+            seconds = (
+                datetime.fromisoformat(expires_at)
+                - datetime.fromisoformat(created_at)
+            ).total_seconds()
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+
+    if seconds <= 0:
+        return None
+    return max(1, round(seconds / 3600))
+
+
+def normalize_ban_entry(
+    raw: Mapping[str, object],
+    *,
+    pending: bool = False,
+) -> BanEntry | None:
+    """Normalize known B站 field aliases into one safe public shape.
+
+    Invalid/missing block ids do not discard an otherwise useful list row;
+    the frontend displays the user but disables 解禁 until a later refresh
+    supplies the authoritative id.
+    """
+    # In GetSilentUserList's real payload, uid/name identify the moderator
+    # who created the record; tuid/tname identify the muted user. Prefer the
+    # target fields whenever they are present, falling back to the normalized
+    # uid/uname shape used by our own pending records and synthetic tests.
+    target_uid = _as_int(raw.get("tuid"))
+    uid = target_uid if target_uid is not None and target_uid > 0 else _as_int(
+        raw.get("uid")
+    )
+    if uid is None or uid <= 0:
+        return None
+
+    block_id = _as_int(raw.get("block_id"))
+    if block_id is None:
+        block_id = _as_int(raw.get("id"))
+    if block_id is not None and block_id <= 0:
+        block_id = None
+
+    if target_uid is not None and target_uid > 0:
+        uname = _as_text(raw.get("tname")) or _as_text(raw.get("uname"))
+    else:
+        uname = _as_text(raw.get("uname")) or _as_text(raw.get("tname"))
+    hour = _as_int(raw.get("hour"))
+    reason = (
+        _as_text(raw.get("reason"))
+        or _as_text(raw.get("msg"))
+        or _as_text(raw.get("message"))
+    )
+    created_at = _as_timestamp(
+        raw.get("created_at", raw.get("ctime", raw.get("start_time")))
+    )
+    expires_at = _as_timestamp(raw.get("expires_at"))
+    if expires_at is None:
+        expires_at = _as_timestamp(raw.get("expire_time"))
+    if expires_at is None:
+        expires_at = _as_timestamp(raw.get("end_time"))
+    if expires_at is None:
+        expires_at = _as_timestamp(raw.get("block_end_time"))
+    if hour is None:
+        hour = _duration_hours(created_at, expires_at)
+    if (
+        expires_at is None
+        and isinstance(created_at, int)
+        and hour is not None
+        and hour > 0
+    ):
+        expires_at = created_at + hour * 3600
+
+    raw_pending = raw.get("pending")
+    return BanEntry(
+        block_id=block_id,
+        uid=uid,
+        uname=uname,
+        hour=hour,
+        reason=reason,
+        created_at=created_at,
+        expires_at=expires_at,
+        pending=pending or raw_pending is True,
+    )
+
+
 class _SnapshotMessage(TypedDict):
     """Full-state push sent on subscribe / start."""
 
     event: Literal["snapshot"]
-    bans: list[dict[str, Any]]
+    bans: list[BanEntry]
 
 
 class _BanAddedMessage(TypedDict):
     """Single new-ban delta (from on_ban or reconcile)."""
 
     event: Literal["ban_added"]
-    ban: dict[str, Any]
+    ban: BanEntry
 
 
 class _BanRemovedMessage(TypedDict):
@@ -127,8 +271,8 @@ class BanListManager:
         self.bili_client = bili_client
         self._reconcile_interval = _reconcile_interval
 
-        # Local state — uid → ban entry from get_ban_list.
-        self._bans: dict[int, dict[str, Any]] = {}
+        # Local state — uid → normalized ban entry.
+        self._bans: dict[int, BanEntry] = {}
 
         # Subscribers under a lock so a snapshot taken in ``_broadcast``
         # is consistent with the underlying list at that moment
@@ -171,13 +315,7 @@ class BanListManager:
         self._room_id = room_id
         self._is_running = is_running
 
-        entries = await self._fetch_snapshot()
-        for entry in entries:
-            uid_obj = entry.get("uid")
-            if isinstance(uid_obj, int):
-                self._bans[uid_obj] = entry
-
-        await self._broadcast({"event": "snapshot", "bans": entries})
+        await self.refresh(preserve_pending=False)
 
         self._reconcile_task = asyncio.create_task(self._reconcile())
 
@@ -215,7 +353,7 @@ class BanListManager:
         """
         async with self._subscribers_lock:
             self._subscribers.append(cb)
-        snapshot_entries: list[dict[str, Any]] = list(self._bans.values())
+        snapshot_entries: list[BanEntry] = list(self._bans.values())
         await self._safe_invoke(cb, {"event": "snapshot", "bans": snapshot_entries})
 
     async def unsubscribe(self, cb: BanListCallback) -> None:
@@ -228,15 +366,23 @@ class BanListManager:
     # Delta events (called by T18 bridge after a successful ban / unban)
     # ------------------------------------------------------------------
 
-    async def on_ban(self, uid: int, ban_entry: dict[str, Any]) -> None:
+    async def on_ban(
+        self, uid: int, ban_entry: Mapping[str, object]
+    ) -> None:
         """Insert ``uid`` into local state and broadcast ``ban_added``.
 
         Called by the T18 bridge right after ``bili_client.ban_user``
         returns success — the local API is the source of truth for
         this delta, so reconcile does not need to re-fetch to confirm.
         """
-        self._bans[uid] = ban_entry
-        await self._broadcast({"event": "ban_added", "ban": ban_entry})
+        normalized = normalize_ban_entry(
+            ban_entry,
+            pending=ban_entry.get("pending") is True,
+        )
+        if normalized is None or normalized["uid"] != uid:
+            raise ValueError("ban entry uid does not match target uid")
+        self._bans[uid] = normalized
+        await self._broadcast({"event": "ban_added", "ban": normalized})
 
     async def on_unban(self, uid: int) -> None:
         """Remove ``uid`` from local state and broadcast ``ban_removed``.
@@ -246,6 +392,25 @@ class BanListManager:
         """
         self._bans.pop(uid, None)
         await self._broadcast({"event": "ban_removed", "uid": uid})
+
+    async def refresh(self, *, preserve_pending: bool = True) -> list[BanEntry]:
+        """Fetch authoritative state, replace the cache and push a snapshot.
+
+        Pending rows originate from a successful write whose B站 list entry
+        has not appeared yet. Keeping them across an immediate/manual refresh
+        avoids a confusing disappear/reappear flicker; a fetched row for the
+        same uid always wins and supplies the block id.
+        """
+        entries = await self._fetch_snapshot()
+        next_bans = {entry["uid"]: entry for entry in entries}
+        if preserve_pending:
+            for uid, entry in self._bans.items():
+                if entry["pending"] and uid not in next_bans:
+                    next_bans[uid] = entry
+        self._bans = next_bans
+        snapshot = list(self._bans.values())
+        await self._broadcast({"event": "snapshot", "bans": snapshot})
+        return snapshot
 
     # ------------------------------------------------------------------
     # Background reconcile — catches out-of-band bans
@@ -283,30 +448,27 @@ class BanListManager:
                 )
                 continue
 
-            new_uids: set[int] = {
-                entry["uid"]
-                for entry in new_entries
-                if isinstance(entry.get("uid"), int)
-            }
+            new_uids: set[int] = {entry["uid"] for entry in new_entries}
             existing_uids: set[int] = set(self._bans.keys())
+            pending_uids = {
+                uid for uid, entry in self._bans.items() if entry["pending"]
+            }
 
             added_uids = new_uids - existing_uids
-            removed_uids = existing_uids - new_uids
+            removed_uids = existing_uids - new_uids - pending_uids
 
             # Apply adds — refresh entry silently for unchanged uids so
             # local state stays in sync with the server even when the
             # entry data (e.g. ban duration) drifts.
             for entry in new_entries:
-                uid_obj = entry.get("uid")
-                if not isinstance(uid_obj, int):
-                    continue
-                if uid_obj in added_uids:
-                    self._bans[uid_obj] = entry
+                uid = entry["uid"]
+                if uid in added_uids:
+                    self._bans[uid] = entry
                     await self._broadcast(
                         {"event": "ban_added", "ban": entry}
                     )
                 else:
-                    self._bans[uid_obj] = entry
+                    self._bans[uid] = entry
 
             # Apply removes.
             for uid in removed_uids:
@@ -346,7 +508,7 @@ class BanListManager:
                 exc,
             )
 
-    async def _fetch_snapshot(self) -> list[dict[str, Any]]:
+    async def _fetch_snapshot(self) -> list[BanEntry]:
         """Call ``bili_client.get_ban_list`` (T4 owns pagination).
 
         ``is_running`` is forwarded so T4 can short-circuit pagination
@@ -355,9 +517,17 @@ class BanListManager:
         """
         if self._room_id is None or self._is_running is None:
             return []
-        return await self.bili_client.get_ban_list(
+        raw_entries = await self.bili_client.get_ban_list(
             self._room_id, is_running=self._is_running
         )
+        normalized: list[BanEntry] = []
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                continue
+            entry = normalize_ban_entry(raw)
+            if entry is not None:
+                normalized.append(entry)
+        return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -385,10 +555,13 @@ def set_banlist_manager(mgr: BanListManager | None) -> None:
 
 
 __all__ = [
+    "BanEntry",
     "BanListCallback",
     "BanListManager",
     "BanListMessage",
+    "BanTimestamp",
     "banlist_manager",
     "get_banlist_manager",
+    "normalize_ban_entry",
     "set_banlist_manager",
 ]

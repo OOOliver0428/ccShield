@@ -41,12 +41,13 @@ Adversarial scenarios exercised:
 * WS disconnect → ``unregister_ws`` (no client left behind).
 * Misleading ``send_json`` success vs. genuinely received JSON: assert
   the parsed dict, not the bare success.
-* Dead WS removed on broadcast error (a raising ``send_json`` on one
-  client does not break the others and the dead client is unregistered).
+* Dead WS removed on sender error (a raising ``send_json`` on one client
+  does not break the others and the dead client is unregistered).
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Iterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -62,6 +63,7 @@ from app.room.events import (
     DanmakuEvent,
     Medal,
     RoomStatusEvent,
+    SuperChatDeleteEvent,
     SuperChatEvent,
 )
 from app.room.session import RoomSession
@@ -387,11 +389,7 @@ def test_stop_returns_200_and_clears_bridge(
     session = _make_mock_session(
         connect_return=True, room_id=22210347, status="connected"
     )
-    bridge = room_routes.RoomBridge.__new__(room_routes.RoomBridge)
-    bridge._room_session = session
-    bridge._history = __import__("collections").deque(maxlen=100)
-    bridge._clients = set()
-    bridge._register_lock = asyncio.Lock()
+    bridge = room_routes.RoomBridge(session)
     room_routes.set_room_bridge(bridge)
 
     response = client.post(
@@ -437,11 +435,8 @@ def _install_bridge_with_history(
     session = _make_mock_session(
         connect_return=True, room_id=active_room_id, status="connected"
     )
-    bridge = room_routes.RoomBridge.__new__(room_routes.RoomBridge)
-    bridge._room_session = session
+    bridge = room_routes.RoomBridge(session)
     bridge._history = deque(history, maxlen=100)
-    bridge._clients = set()
-    bridge._register_lock = asyncio.Lock()
     room_routes.set_room_bridge(bridge)
     return bridge
 
@@ -497,6 +492,86 @@ def test_ws_receives_history_snapshot_then_live_events(
         live = ws.receive_json()
         assert live["type"] == "room_status"
         assert live["status"] == "connected"
+
+
+def test_active_super_chat_replays_after_chat_history_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long-lived SC is replayed even after 100 ordinary chat events."""
+    history: list[BridgeEvent] = [
+        DanmakuEvent(
+            type="danmaku",
+            uid=i,
+            uname=f"u{i}",
+            text=f"m{i}",
+            ts=1700000000 + i,
+            guard_level=0,
+            medal=None,
+        )
+        for i in range(100)
+    ]
+    bridge = _install_bridge_with_history(
+        monkeypatch, active_room_id=22210347, history=history
+    )
+    active_sc = SuperChatEvent(
+        type="sc",
+        id="paid-1",
+        uid=8,
+        uname="supporter",
+        text="still pinned",
+        price=2000,
+        ts=int(time.time()),
+        end_ts=int(time.time()) + 7200,
+        duration=7200,
+    )
+    bridge._active_super_chats = {active_sc.id: active_sc}
+
+    ws = MagicMock()
+    ws.send_json = AsyncMock()
+
+    async def _register_and_flush() -> None:
+        await bridge.register_ws(ws)
+        for _ in range(100):
+            if ws.send_json.await_count == 51:
+                break
+            await asyncio.sleep(0)
+        await bridge.unregister_ws(ws)
+
+    asyncio.run(_register_and_flush())
+
+    first_payload = ws.send_json.await_args_list[0].args[0]
+    assert first_payload["type"] == "sc"
+    assert first_payload["id"] == "paid-1"
+    # Active SC + the capped 50 ordinary history events.
+    assert ws.send_json.await_count == 51
+
+
+def test_super_chat_delete_removes_bridge_active_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = _install_bridge_with_history(
+        monkeypatch, active_room_id=22210347, history=[]
+    )
+    sc = SuperChatEvent(
+        type="sc",
+        id="paid-delete",
+        uid=9,
+        uname="user",
+        text="remove me",
+        price=30,
+        ts=int(time.time()),
+        end_ts=int(time.time()) + 60,
+        duration=60,
+    )
+    asyncio.run(bridge._on_event(sc))
+    assert [item.id for item in bridge.active_super_chats] == ["paid-delete"]
+
+    asyncio.run(
+        bridge._on_event(
+            SuperChatDeleteEvent(type="sc_delete", ids=["paid-delete"])
+        )
+    )
+    assert bridge.active_super_chats == []
 
 
 def test_ws_sends_only_normalized_event_dump_no_raw_keys(

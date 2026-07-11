@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthBootstrapApiAuthBootstrapGetData, AuthBootstrapApiAuthBootstrapGetResponses, AuthStatusApiAuthStatusGetData, AuthStatusApiAuthStatusGetResponses, DeleteBanRouteApiBanDeleteData, DeleteBanRouteApiBanDeleteErrors, DeleteBanRouteApiBanDeleteResponses, GetBanListRouteApiBanListRoomIdGetData, GetBanListRouteApiBanListRoomIdGetErrors, GetBanListRouteApiBanListRoomIdGetResponses, GetRoomRouteApiRoomsGetData, GetRoomRouteApiRoomsGetResponses, HealthHealthGetData, HealthHealthGetResponses, ManualCookiesApiAuthManualPostData, ManualCookiesApiAuthManualPostErrors, ManualCookiesApiAuthManualPostResponses, PostBanRouteApiBanPostData, PostBanRouteApiBanPostErrors, PostBanRouteApiBanPostResponses, QrPollRouteApiAuthQrPollGetData, QrPollRouteApiAuthQrPollGetErrors, QrPollRouteApiAuthQrPollGetResponses, QrStartApiAuthQrStartPostData, QrStartApiAuthQrStartPostResponses, ResolveRoomRouteApiRoomsResolveGetData, ResolveRoomRouteApiRoomsResolveGetErrors, ResolveRoomRouteApiRoomsResolveGetResponses, StartRoomRouteApiRoomsStartPostData, StartRoomRouteApiRoomsStartPostErrors, StartRoomRouteApiRoomsStartPostResponses, StopRoomRouteApiRoomsStopPostData, StopRoomRouteApiRoomsStopPostResponses } from './types.gen';
+import type { AuthBootstrapApiAuthBootstrapGetData, AuthBootstrapApiAuthBootstrapGetResponses, AuthMeApiAuthMeGetData, AuthMeApiAuthMeGetResponses, AuthStatusApiAuthStatusGetData, AuthStatusApiAuthStatusGetResponses, DeleteBanRouteApiBanDeleteData, DeleteBanRouteApiBanDeleteErrors, DeleteBanRouteApiBanDeleteResponses, GetBanListRouteApiBanListRoomIdGetData, GetBanListRouteApiBanListRoomIdGetErrors, GetBanListRouteApiBanListRoomIdGetResponses, GetRoomRouteApiRoomsGetData, GetRoomRouteApiRoomsGetResponses, HealthHealthGetData, HealthHealthGetResponses, ManualCookiesApiAuthManualPostData, ManualCookiesApiAuthManualPostErrors, ManualCookiesApiAuthManualPostResponses, PostBanRouteApiBanPostData, PostBanRouteApiBanPostErrors, PostBanRouteApiBanPostResponses, QrPollRouteApiAuthQrPollGetData, QrPollRouteApiAuthQrPollGetErrors, QrPollRouteApiAuthQrPollGetResponses, QrStartApiAuthQrStartPostData, QrStartApiAuthQrStartPostResponses, ResolveRoomRouteApiRoomsResolveGetData, ResolveRoomRouteApiRoomsResolveGetErrors, ResolveRoomRouteApiRoomsResolveGetResponses, StartRoomRouteApiRoomsStartPostData, StartRoomRouteApiRoomsStartPostErrors, StartRoomRouteApiRoomsStartPostResponses, StopRoomRouteApiRoomsStopPostData, StopRoomRouteApiRoomsStopPostResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -79,6 +79,23 @@ export const qrPollRouteApiAuthQrPollGet = <ThrowOnError extends boolean = false
 export const authStatusApiAuthStatusGet = <ThrowOnError extends boolean = false>(options?: Options<AuthStatusApiAuthStatusGetData, ThrowOnError>): RequestResult<AuthStatusApiAuthStatusGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<AuthStatusApiAuthStatusGetResponses, unknown, ThrowOnError>({ url: '/api/auth/status', ...options });
 
 /**
+ * Return the currently authenticated user's identity
+ *
+ * Surface ``uname`` / ``mid`` to the SPA after QR or manual login.
+ *
+ * Gating:
+ *
+ * - **401** when the auth session is not AUTHENTICATED (cold start,
+ * expired cookies, or login still in flight).
+ * - **401** when the ``/nav`` call returns no data (cookies were marked
+ * valid but the API rejected them — e.g. token rotated server-side).
+ *
+ * On the happy path we return ``{uname, mid}`` so the frontend can
+ * render the logged-in badge without a separate round-trip.
+ */
+export const authMeApiAuthMeGet = <ThrowOnError extends boolean = false>(options?: Options<AuthMeApiAuthMeGetData, ThrowOnError>): RequestResult<AuthMeApiAuthMeGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<AuthMeApiAuthMeGetResponses, unknown, ThrowOnError>({ url: '/api/auth/me', ...options });
+
+/**
  * Save user-pasted cookies (Plan B fallback)
  *
  * Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.
@@ -88,6 +105,13 @@ export const authStatusApiAuthStatusGet = <ThrowOnError extends boolean = false>
  * HTTP 400. The caller's existing ``.env`` is left untouched — the
  * :func:`save_cookies_manual` helper does the same guarantee at the
  * persistence layer.
+ *
+ * Bug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,
+ * fetch one from ``/x/frontend/finger/spi`` and thread it through to
+ * both ``save_cookies_manual`` and ``mark_authenticated_after_login``.
+ * If the user did provide a buvid3 we trust it verbatim (it's the
+ * cookie they extracted from a real browser session, which is what
+ * B站 actually expects). fetch_buvid3 is best-effort and never raises.
  */
 export const manualCookiesApiAuthManualPost = <ThrowOnError extends boolean = false>(options: Options<ManualCookiesApiAuthManualPostData, ThrowOnError>): RequestResult<ManualCookiesApiAuthManualPostResponses, ManualCookiesApiAuthManualPostErrors, ThrowOnError> => (options.client ?? client).post<ManualCookiesApiAuthManualPostResponses, ManualCookiesApiAuthManualPostErrors, ThrowOnError>({
     url: '/api/auth/manual',

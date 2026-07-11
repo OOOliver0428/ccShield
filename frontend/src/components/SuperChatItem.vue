@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /**
- * T23 — SuperChat row.
+ * Active SuperChat card.
  *
  * SuperChats are paid pinned messages — they persist on screen longer
  * than regular danmaku and carry a price badge. The bridge ships a
  * dedicated ``sc`` event type so we render them with their own row
  * style (warm background, left border accent, prominent price tag).
  *
- * Layout: price (bold) · uname · text · ts — price-first so a scan
- * of the chat buffer surfaces new revenue immediately.
+ * Colors and expiry come from the server payload. The countdown is only a
+ * presentation aid; the store removes the card at the authoritative end_ts.
  */
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { BridgeScEvent } from "../api/ws";
+import FanMedal from "./FanMedal.vue";
+import GuardBadge from "./GuardBadge.vue";
 
 interface Props {
   sc: BridgeScEvent;
@@ -20,6 +22,34 @@ interface Props {
 const props = defineProps<Props>();
 
 const priceText = computed(() => `¥${props.sc.price}`);
+const nowSeconds = ref(Math.floor(Date.now() / 1000));
+let ticker: ReturnType<typeof setInterval> | null = null;
+
+onMounted(() => {
+  ticker = setInterval(() => {
+    nowSeconds.value = Math.floor(Date.now() / 1000);
+  }, 1_000);
+});
+
+onBeforeUnmount(() => {
+  if (ticker !== null) clearInterval(ticker);
+});
+
+const remainingText = computed(() => {
+  const seconds = Math.max(0, props.sc.end_ts - nowSeconds.value);
+  if (seconds < 60) return `${seconds}秒`;
+  if (seconds < 3_600) return `${Math.ceil(seconds / 60)}分钟`;
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.ceil((seconds % 3_600) / 60);
+  return minutes > 0 ? `${hours}小时${minutes}分钟` : `${hours}小时`;
+});
+
+const cardStyle = computed<Record<string, string>>(() => ({
+  "--sc-body-bg": props.sc.background_color || "#edf5ff",
+  "--sc-accent": props.sc.background_bottom_color || "#2a60b2",
+  "--sc-price-bg": props.sc.background_price_color || "#7497cd",
+  "--sc-message-color": props.sc.message_font_color || "#24476b",
+}));
 
 const tsText = computed(() => {
   const d = new Date(props.sc.ts * 1000);
@@ -29,49 +59,71 @@ const tsText = computed(() => {
 </script>
 
 <template>
-  <div class="sc-row" data-testid="sc-row">
-    <span class="sc-price" data-testid="sc-price">{{ priceText }}</span>
-    <span class="uname" data-testid="sc-uname">{{ sc.uname }}</span>
-    <span class="sep">:</span>
-    <span class="text" data-testid="sc-text">{{ sc.text }}</span>
-    <span class="ts" data-testid="sc-ts">{{ tsText }}</span>
-  </div>
+  <article class="sc-card" :style="cardStyle" data-testid="sc-row">
+    <header class="sc-meta">
+      <span class="sc-price" data-testid="sc-price">{{ priceText }}</span>
+      <GuardBadge :level="sc.guard_level" />
+      <FanMedal :medal="sc.medal" />
+      <span class="uname" data-testid="sc-uname">{{ sc.uname }}</span>
+      <span class="remaining" data-testid="sc-remaining">剩余 {{ remainingText }}</span>
+    </header>
+    <div class="sc-message">
+      <span class="text" data-testid="sc-text">{{ sc.text }}</span>
+      <span class="ts" data-testid="sc-ts">{{ tsText }}</span>
+    </div>
+  </article>
 </template>
 
 <style scoped>
-.sc-row {
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  background: var(--el-color-danger-light-9, #fef0f0);
-  border-left: 3px solid var(--el-color-danger, #f56c6c);
-  border-radius: 4px;
-  margin: 2px 0;
-  font-size: 13px;
-  line-height: 1.6;
+.sc-card {
+  overflow: hidden;
+  background: var(--sc-body-bg);
+  border: 1px solid color-mix(in srgb, var(--sc-accent) 74%, white 8%);
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 18%);
+  font-size: 11px;
+  line-height: 1.5;
 }
-.sc-row .sc-price {
+.sc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: #fff;
+  background: var(--sc-accent);
+}
+.sc-card .sc-price {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--sc-price-bg);
   font-weight: 700;
-  color: var(--el-color-danger, #f56c6c);
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
-.sc-row .uname {
-  color: var(--el-color-danger-dark-2, #c45656);
+.sc-card .uname {
   font-weight: 600;
 }
-.sc-row .sep {
-  color: var(--el-text-color-secondary, #c0c4cc);
+.sc-card .remaining {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 9px;
+  opacity: 0.9;
 }
-.sc-row .text {
-  color: var(--el-text-color-primary, #303133);
-  flex: 1 1 auto;
+.sc-message {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 10px;
+  color: var(--sc-message-color);
+}
+.sc-card .text {
+  flex: 1;
   word-break: break-word;
 }
-.sc-row .ts {
-  color: var(--el-text-color-secondary, #c0c4cc);
-  font-size: 11px;
+.sc-card .ts {
+  white-space: nowrap;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
+  opacity: 0.7;
 }
 </style>

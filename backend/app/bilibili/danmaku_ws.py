@@ -13,7 +13,7 @@ ccShield/app/core/danmaku_ws.py but, by deliberate design:
    deterministic, fully-mocked flows without real network or wall-clock
    sleeps. Defaults match the spec: 30 s heartbeat, 45 s watchdog,
    8 s auth timeout, exponential backoff ``[1, 2, 4, 8, 16, 30]`` capped
-   at 6 attempts, queue ``maxsize=2000``.
+   at 6 attempts, priority buffer ``maxsize=20000``.
 
 Public API::
 
@@ -24,18 +24,20 @@ Public API::
                                  # _auth_timeout seconds.
     async stop()                 # cancel + close + clear. Bounded.
 
-Behaviour (single-connection only — multi-host redundancy is deferred
-to a follow-up; we take ``host_list[0]``):
+Behaviour (single-connection only — endpoints rotate on reconnect, but
+multiple upstream sockets are never opened in parallel):
 
 - Auth rejections (AUTH_RSP ``code != 0``) are FATAL: ``_fatal_error`` is
   set, everything stops, ``start()`` returns ``False`` without retrying.
 - Connection drops BEFORE or AFTER auth are recoverable: exponential
-  backoff ``[1, 2, 4, 8, 16, 30]`` s, up to 6 attempts.
+  backoff ``[1, 2, 4, 8, 16, 30]`` s, up to 6 attempts. Each attempt
+  uses the next endpoint returned by Bilibili.
 - Heartbeat is sent every 30 s. If no HEARTBEAT_RSP arrives within 45 s
   the watchdog force-closes the ws, triggering a reconnect.
-- All parsed messages flow through a single :class:`asyncio.Queue`
-  (``maxsize=2000``) consumed by ``_process_queue``. Drops are logged
-  at warning level.
+- Parsed messages flow through a bounded priority buffer (``maxsize=20000``)
+  consumed by ``_process_queue``. Chat, SC and room-management events can
+  evict lower-value traffic under pressure. Drops are counted and rate-limited
+  in logs so an overload cannot create a second log storm.
 
 This module owns NO message normalization — that is T12's responsibility.
 ``on_message`` receives the raw parsed dicts from
@@ -47,15 +49,21 @@ import asyncio
 import contextlib
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import websockets
 from loguru import logger
 from websockets.exceptions import ConnectionClosed
 
+from app.bilibili.message_buffer import (
+    BufferedMessage,
+    MessagePriority,
+    PriorityMessageBuffer,
+    command_name,
+)
 from app.bilibili.protocol import (
     AUTH,
-    BROTLI,
     HEARTBEAT,
     pack_data,
     unpack_data,
@@ -71,7 +79,8 @@ if TYPE_CHECKING:
 _DEFAULT_HEARTBEAT_INTERVAL: float = 30.0
 _DEFAULT_WATCHDOG_TIMEOUT: float = 45.0
 _DEFAULT_AUTH_TIMEOUT: float = 8.0
-_DEFAULT_QUEUE_MAXSIZE: int = 2000
+_DEFAULT_QUEUE_MAXSIZE: int = 20_000
+_WS_FRAME_MAX_QUEUE: int = 256
 _DEFAULT_RECONNECT_DELAYS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
 _DEFAULT_RECONNECT_MAX_ATTEMPTS: int = 6
 
@@ -81,6 +90,22 @@ _HEARTBEAT_PAYLOAD: bytes = b'[object Object]'
 
 
 OnMessageCallback = Callable[[dict], Awaitable[None]]
+
+
+@dataclass(slots=True)
+class _DanmakuMetrics:
+    frames_received: int = 0
+    decoded_messages: int = 0
+    parse_errors: int = 0
+    enqueued_messages: int = 0
+    processed_messages: int = 0
+    dropped_messages: int = 0
+    queue_peak: int = 0
+    max_dispatch_lag_ms: float = 0.0
+    connection_attempts: int = 0
+    connected_sessions: int = 0
+    dropped_by_priority: dict[str, int] = field(default_factory=dict)
+    dropped_by_command: dict[str, int] = field(default_factory=dict)
 
 
 # Broad ws handle — typed as object because the production
@@ -122,7 +147,8 @@ class DanmakuClient:
         self._fatal_error: str | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self.ws: WebSocketLike | None = None
-        self.msg_queue: asyncio.Queue[dict] | None = None
+        self.msg_queue: PriorityMessageBuffer | None = None
+        self._metrics = _DanmakuMetrics()
         self.uid: int = 0
         self._token: str | None = None
 
@@ -151,25 +177,46 @@ class DanmakuClient:
 
         token = danmu_info.get("token")
         host_list = danmu_info.get("host_list") or []
-        if not token or not host_list:
+        if (
+            not isinstance(token, str)
+            or not token
+            or not isinstance(host_list, list)
+        ):
             logger.error(
                 "danmaku_ws: missing token/hosts room={} token={} hosts={}",
                 self.room_id,
                 bool(token),
+                len(host_list) if isinstance(host_list, list) else 0,
+            )
+            return False
+
+        ws_urls: list[str] = []
+        for host in host_list:
+            if not isinstance(host, dict):
+                continue
+            hostname = host.get("host")
+            wss_port = host.get("wss_port")
+            if (
+                isinstance(hostname, str)
+                and hostname
+                and isinstance(wss_port, int)
+                and wss_port > 0
+            ):
+                ws_urls.append(f"wss://{hostname}:{wss_port}/sub")
+        if not ws_urls:
+            logger.error(
+                "danmaku_ws: no valid wss endpoints room={} hosts={}",
+                self.room_id,
                 len(host_list),
             )
             return False
         self._token = token
 
-        # Single-connection: take only the first host.
-        host = host_list[0]
-        ws_url = f"wss://{host['host']}:{host['wss_port']}/sub"
         logger.info(
-            "danmaku_ws: danmu_info ok room={} token_len={} hosts={} url={}",
+            "danmaku_ws: danmu_info ok room={} token_len={} endpoints={}",
             self.room_id,
             len(token),
-            len(host_list),
-            ws_url,
+            len(ws_urls),
         )
 
         self.uid = await self._fetch_uid()
@@ -179,7 +226,8 @@ class DanmakuClient:
         self._fatal_error = None
         self._tasks = []
         self.ws = None
-        self.msg_queue = asyncio.Queue(maxsize=self._queue_maxsize)
+        self._metrics = _DanmakuMetrics()
+        self.msg_queue = PriorityMessageBuffer(maxsize=self._queue_maxsize)
 
         queue_task = asyncio.create_task(
             self._process_queue(), name=f"danmaku_queue[{self.room_id}]"
@@ -188,7 +236,8 @@ class DanmakuClient:
 
         # Run the connect loop in the background; await first auth result.
         connect_task = asyncio.create_task(
-            self._connect_loop(ws_url), name=f"danmaku_conn[{self.room_id}]"
+            self._connect_loop(tuple(ws_urls)),
+            name=f"danmaku_conn[{self.room_id}]",
         )
         self._tasks.append(connect_task)
 
@@ -205,7 +254,9 @@ class DanmakuClient:
                 return False
             if self.ws is not None:
                 logger.info(
-                    "danmaku_ws: started room={} ws={}", self.room_id, ws_url
+                    "danmaku_ws: started room={} endpoints={}",
+                    self.room_id,
+                    len(ws_urls),
                 )
                 return True
             await asyncio.sleep(0.05)
@@ -250,11 +301,7 @@ class DanmakuClient:
         self._tasks = []
 
         if self.msg_queue is not None:
-            while not self.msg_queue.empty():
-                try:
-                    self.msg_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self.msg_queue.clear()
 
         logger.info("danmaku_ws: stopped room={}", self.room_id)
 
@@ -262,7 +309,7 @@ class DanmakuClient:
     # Connect / auth / heartbeat / listen / watchdog
     # -----------------------------------------------------------------------
 
-    async def _connect_loop(self, ws_url: str) -> None:
+    async def _connect_loop(self, ws_urls: tuple[str, ...]) -> None:
         """Connect → auth → run session; reconnect with backoff on drop.
 
         Auth failures (AUTH_RSP code != 0) are fatal — they set
@@ -271,19 +318,31 @@ class DanmakuClient:
         ``_reconnect_max_attempts`` attempts with the configured
         backoff schedule.
         """
+        if not ws_urls:
+            self._fatal_error = "no websocket endpoint"
+            return
+
         attempts = 0
+        endpoint_cursor = 0
         while self.running and attempts < self._reconnect_max_attempts:
             # 1. Connect.
+            ws_url = ws_urls[endpoint_cursor % len(ws_urls)]
+            endpoint_cursor += 1
+            self._metrics.connection_attempts += 1
             try:
                 ws = await websockets.connect(
                     ws_url,
                     ping_interval=None,
                     max_size=None,
+                    max_queue=_WS_FRAME_MAX_QUEUE,
                     compression=None,
                 )
             except Exception as exc:
                 logger.warning(
-                    "danmaku_ws: connect failed room={}: {}", self.room_id, exc
+                    "danmaku_ws: connect failed room={} url={}: {}",
+                    self.room_id,
+                    ws_url,
+                    exc,
                 )
                 attempts += 1
                 await self._backoff_sleep(attempts)
@@ -323,6 +382,7 @@ class DanmakuClient:
             # 3. Auth OK — run heartbeat + listen + watchdog.
             self.ws = ws
             attempts = 0  # reset on successful session.
+            self._metrics.connected_sessions += 1
             logger.info("danmaku_ws: auth ok room={}", self.room_id)
 
             await self._run_session(ws)
@@ -365,30 +425,36 @@ class DanmakuClient:
               - (False, False): no AUTH_RSP received → recoverable
         """
         assert self._token is not None
+        auth_payload: dict[str, object] = {
+            "uid": self.uid,
+            "roomid": self.room_id,
+            # Select Brotli for NORMAL packets sent by the server. This does
+            # not describe the encoding of the AUTH packet itself.
+            "protover": 3,
+            "platform": "web",
+            "type": 2,
+            "key": self._token,
+        }
+        buvid = self.bili_client.get_cookie("buvid3")
+        if buvid:
+            # The cookie is named buvid3; the WS auth field is named buvid.
+            auth_payload["buvid"] = buvid
+
         body = json.dumps(
-            {
-                "uid": self.uid,
-                "roomid": self.room_id,
-                "protover": 3,
-                "platform": "web",
-                "type": 2,
-                "key": self._token,
-            },
+            auth_payload,
             separators=(",", ":"),
         ).encode("utf-8")
-        # Match ccShield's proven impl: pack AUTH with protover=3 (BROTLI).
-        # B站 expects the AUTH frame's header protover to match the session's
-        # declared compression; sending protover=1 here was a known cause
-        # of "no danmaku after connect" — auth silently accepted by B站 but
-        # subsequent NORMAL frames refused.
-        packet = pack_data(body, AUTH, proto_ver=BROTLI)
+        # AUTH and HEARTBEAT bodies are raw (header protocol version 1).
+        # The JSON protover above independently negotiates Brotli downlink.
+        packet = pack_data(body, AUTH)
 
         logger.info(
-            "danmaku_ws: sending AUTH room={} uid={} protover=3 platform=web "
-            "key_len={}",
+            "danmaku_ws: sending AUTH room={} uid={} header_ver=1 "
+            "message_protover=3 platform=web key_len={} buvid={}",
             self.room_id,
             self.uid,
             len(self._token),
+            bool(buvid),
         )
         await ws.send(packet)  # type: ignore[attr-defined]
         try:
@@ -473,8 +539,9 @@ class DanmakuClient:
         """Receive frames, parse, forward to msg_queue.
 
         HEARTBEAT_RSP frames update ``last_ack_box`` (the watchdog reset
-        signal). All other messages are enqueued (drop + warn on
-        ``QueueFull``). ConnectionClosed terminates the loop.
+        signal). All other messages enter the bounded priority buffer;
+        overload shedding is counted by ``_enqueue``. ConnectionClosed
+        terminates the loop.
         """
         frame_count = 0
         while self.running:
@@ -492,6 +559,7 @@ class DanmakuClient:
                 continue
 
             frame_count += 1
+            self._metrics.frames_received += 1
             if frame_count == 1:
                 logger.info(
                     "danmaku_ws: first frame received room={} bytes={}",
@@ -508,11 +576,13 @@ class DanmakuClient:
             try:
                 messages = unpack_data(bytes(data))
             except Exception as exc:
+                self._metrics.parse_errors += 1
                 logger.debug(
                     "danmaku_ws: unpack failed room={}: {}", self.room_id, exc
                 )
                 continue
 
+            self._metrics.decoded_messages += len(messages)
             for msg in messages:
                 if not isinstance(msg, dict):
                     continue
@@ -543,25 +613,39 @@ class DanmakuClient:
         cmd_counts: dict[str, int] = {}
         while self.running:
             try:
-                msg = await self.msg_queue.get()
+                buffered: BufferedMessage = await self.msg_queue.get()
             except asyncio.CancelledError:
                 return
+            msg = buffered.payload
+            lag_ms = (
+                asyncio.get_running_loop().time() - buffered.enqueued_at
+            ) * 1000
+            self._metrics.max_dispatch_lag_ms = max(
+                self._metrics.max_dispatch_lag_ms,
+                lag_ms,
+            )
             cmd = msg.get("cmd") if isinstance(msg, dict) else None
-            cmd_key = cmd if isinstance(cmd, str) else "<non-str>"
+            cmd_key = command_name(msg) if isinstance(cmd, str) else "<non-str>"
             cmd_counts[cmd_key] = cmd_counts.get(cmd_key, 0) + 1
             processed += 1
+            self._metrics.processed_messages += 1
             if processed == 1:
                 logger.info(
                     "danmaku_ws: first message dispatched cmd={} room={}",
                     cmd_key,
                     self.room_id,
                 )
-            elif processed % 200 == 0:
+            elif processed % 1000 == 0:
                 top = sorted(cmd_counts.items(), key=lambda kv: -kv[1])[:5]
                 logger.info(
-                    "danmaku_ws: processed={} room={} top_cmds={}",
+                    "danmaku_ws: processed={} room={} queue={} peak={} "
+                    "dropped={} lag_max_ms={:.1f} top_cmds={}",
                     processed,
                     self.room_id,
+                    self.msg_queue.qsize(),
+                    self._metrics.queue_peak,
+                    self._metrics.dropped_messages,
+                    self._metrics.max_dispatch_lag_ms,
                     top,
                 )
             try:
@@ -573,8 +657,6 @@ class DanmakuClient:
                     self.room_id,
                     exc,
                 )
-            finally:
-                self.msg_queue.task_done()
         if cmd_counts:
             logger.info(
                 "danmaku_ws: queue consumer exit room={} processed={} cmds={}",
@@ -588,17 +670,73 @@ class DanmakuClient:
     # -----------------------------------------------------------------------
 
     def _enqueue(self, msg: dict) -> None:
-        """Non-blocking enqueue; drop + warn on QueueFull."""
+        """Non-blocking priority enqueue with observable load shedding."""
         if self.msg_queue is None:
             return
-        try:
-            self.msg_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            logger.warning(
-                "danmaku_ws: queue full, dropping msg cmd={} room={}",
-                msg.get("cmd"),
-                self.room_id,
+        result = self.msg_queue.put_nowait(
+            msg,
+            enqueued_at=asyncio.get_running_loop().time(),
+        )
+        if result.accepted:
+            self._metrics.enqueued_messages += 1
+            self._metrics.queue_peak = max(
+                self._metrics.queue_peak,
+                self.msg_queue.qsize(),
             )
+        if result.dropped is not None:
+            self._record_drop(result.dropped, evicted=result.accepted)
+
+    def _record_drop(
+        self, dropped: BufferedMessage, *, evicted: bool
+    ) -> None:
+        self._metrics.dropped_messages += 1
+        priority = dropped.priority.name.lower()
+        command = command_name(dropped.payload)
+        priority_count = self._metrics.dropped_by_priority.get(priority, 0) + 1
+        command_count = self._metrics.dropped_by_command.get(command, 0) + 1
+        self._metrics.dropped_by_priority[priority] = priority_count
+        self._metrics.dropped_by_command[command] = command_count
+
+        # First occurrence and every 100th thereafter. Avoid turning an
+        # already-overloaded event loop into a warning-log generator.
+        if command_count != 1 and command_count % 100 != 0:
+            return
+        log = (
+            logger.error
+            if dropped.priority is MessagePriority.CRITICAL
+            else logger.warning
+        )
+        log(
+            "danmaku_ws: buffer pressure {} cmd={} priority={} room={} "
+            "dropped_total={} queue={}",
+            "evicted" if evicted else "rejected",
+            command,
+            priority,
+            self.room_id,
+            self._metrics.dropped_messages,
+            self.msg_queue.qsize() if self.msg_queue is not None else 0,
+        )
+
+    @property
+    def metrics_snapshot(self) -> dict[str, object]:
+        """Cheap diagnostic snapshot for logs, tests and future status UI."""
+        return {
+            "frames_received": self._metrics.frames_received,
+            "decoded_messages": self._metrics.decoded_messages,
+            "parse_errors": self._metrics.parse_errors,
+            "enqueued_messages": self._metrics.enqueued_messages,
+            "processed_messages": self._metrics.processed_messages,
+            "dropped_messages": self._metrics.dropped_messages,
+            "dropped_by_priority": dict(self._metrics.dropped_by_priority),
+            "dropped_by_command": dict(self._metrics.dropped_by_command),
+            "queue_depth": self.msg_queue.qsize() if self.msg_queue else 0,
+            "queue_peak": self._metrics.queue_peak,
+            "max_dispatch_lag_ms": round(
+                self._metrics.max_dispatch_lag_ms, 3
+            ),
+            "connection_attempts": self._metrics.connection_attempts,
+            "connected_sessions": self._metrics.connected_sessions,
+        }
 
     async def _fetch_danmu_info(self) -> dict | None:
         try:

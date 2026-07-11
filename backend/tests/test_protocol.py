@@ -41,7 +41,8 @@ def test_opcode_constants() -> None:
 
 
 def test_proto_version_constants() -> None:
-    """Proto versions match the spec: raw=1, zlib=2, brotli=3."""
+    """Proto versions match the spec: plain=0, raw=1, zlib=2, brotli=3."""
+    assert proto.PLAIN == 0
     assert proto.RAW == 1
     assert proto.ZLIB == 2
     assert proto.BROTLI == 3
@@ -164,6 +165,18 @@ def test_unpack_nested_subframes_inside_brotli() -> None:
     assert msgs == [inner_a, inner_b]
 
 
+def test_unpack_brotli_with_plain_v0_normal_subframes() -> None:
+    """Real Brotli payloads commonly contain NORMAL JSON frames at version 0."""
+    inner = {"cmd": "DANMU_MSG", "info": [1.0, "live-shape", [7, "alice"]]}
+    raw = json.dumps(inner, separators=(",", ":")).encode("utf-8")
+    inner_frame = proto.pack_data(raw, proto.NORMAL, proto_ver=proto.PLAIN)
+    outer = proto.pack_data(
+        brotli.compress(inner_frame), proto.NORMAL, proto_ver=proto.BROTLI
+    )
+
+    assert proto.unpack_data(outer) == [inner]
+
+
 def test_unpack_nested_subframes_inside_zlib() -> None:
     """Same recursion path for proto_ver=2."""
     inner_a = {"cmd": "SEND_GIFT", "data": {"id": 1}}
@@ -284,7 +297,7 @@ def test_unpack_heartbeat_rsp_short_payload_skipped() -> None:
 
 
 def test_unpack_unknown_proto_ver_skips_packet() -> None:
-    """A packet with an unknown proto version (not 1/2/3) is skipped, not crashed."""
+    """A packet with an unknown proto version (not 0/1/2/3) is skipped."""
     body = {"cmd": "OK"}
     valid = proto.pack_data(
         json.dumps(body, separators=(",", ":")).encode("utf-8"), proto.NORMAL

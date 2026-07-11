@@ -78,6 +78,36 @@ describe("RoomInput.vue", () => {
     expect(wrapper.find('[data-testid="connect-btn"]').exists()).toBe(false);
   });
 
+  it("shows anchor, canonical room id and title after connecting", async () => {
+    server.use(
+      http.get("*/api/rooms/resolve", () =>
+        HttpResponse.json({
+          room_id: 1601605,
+          short_id: 0,
+          uname: "测试主播",
+          title: "测试直播标题",
+        }),
+      ),
+      http.post("*/api/rooms/start", () =>
+        HttpResponse.json({ room_id: 1601605, title: "测试直播标题" }),
+      ),
+    );
+
+    const wrapper = mount(RoomInput);
+    const input = wrapper.find('[data-testid="room-input-field"] input');
+    await input.setValue("1601605");
+    await input.trigger("blur");
+    await flushPromises();
+    await wrapper.find('[data-testid="connect-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="room-info"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="room-anchor"]').text()).toBe("测试主播");
+    expect(wrapper.find('[data-testid="room-number"]').text()).toBe("1601605");
+    expect(wrapper.find('[data-testid="room-title"]').text()).toBe("测试直播标题");
+    expect(wrapper.find('[data-testid="resolved-hint"]').exists()).toBe(false);
+  });
+
   it("clicking 断开 calls /rooms/stop and flips status back", async () => {
     let stopCalled = false;
     server.use(

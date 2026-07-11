@@ -21,6 +21,7 @@ Test count: 10 (one per spec scenario):
 """
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from unittest.mock import AsyncMock
 
@@ -31,6 +32,7 @@ from app.room.events import (
     DanmakuEvent,
     Medal,
     RoomStatusEvent,
+    SuperChatDeleteEvent,
     SuperChatEvent,
 )
 from app.room.session import RoomSession
@@ -207,17 +209,24 @@ def test_normalize_danmu_msg_no_medal() -> None:
 
 
 def test_normalize_super_chat() -> None:
-    """data.uid, data.user_info.uname, data.message, data.price,
-    data.start_time → SuperChatEvent."""
+    """The paid duration, identity, styling and badges survive normalization."""
     sess = RoomSession(bili_client=_stub_bili())
     raw = {
         "cmd": "SUPER_CHAT_MESSAGE",
         "data": {
             "uid": 456,
-            "user_info": {"uname": "bob"},
+            "id": 9988,
+            "user_info": {"uname": "bob", "guard_level": 3},
+            "medal_info": {"medal_name": "测试牌", "medal_level": 12},
             "message": "hi",
             "price": 30,
             "start_time": 1700000001,
+            "end_time": 1700000061,
+            "time": 60,
+            "background_color": "#EDF5FF",
+            "background_bottom_color": "#2A60B2",
+            "background_price_color": "#7497CD",
+            "message_font_color": "#24476B",
         },
     }
     event = sess._normalize(raw)
@@ -228,6 +237,50 @@ def test_normalize_super_chat() -> None:
     assert event.text == "hi"
     assert event.price == 30
     assert event.ts == 1700000001
+    assert event.id == "9988"
+    assert event.end_ts == 1700000061
+    assert event.duration == 60
+    assert event.guard_level == 3
+    assert event.medal == Medal(name="测试牌", level=12)
+    assert event.background_color == "#EDF5FF"
+    assert event.background_bottom_color == "#2A60B2"
+    assert event.background_price_color == "#7497CD"
+    assert event.message_font_color == "#24476B"
+
+
+def test_normalize_super_chat_modern_uinfo_and_delete() -> None:
+    """Modern ``uinfo.base.name`` and the delete command are supported."""
+    sess = RoomSession(bili_client=_stub_bili())
+    event = sess._normalize(
+        {
+            "cmd": "SUPER_CHAT_MESSAGE:1",
+            "data": {
+                "id": "sc-modern",
+                "uid": "789",
+                "uinfo": {
+                    "base": {"name": "modern-user"},
+                    "guard": {"level": 3},
+                    "medal": {"name": "新版牌", "level": 30},
+                },
+                "message": "hello",
+                "price": "100",
+                "start_time": 1700000000,
+                "time": 300,
+            },
+        }
+    )
+    assert isinstance(event, SuperChatEvent)
+    assert event.uid == 789
+    assert event.uname == "modern-user"
+    assert event.end_ts == 1700000300
+    assert event.guard_level == 3
+    assert event.medal == Medal(name="新版牌", level=30)
+
+    deleted = sess._normalize(
+        {"cmd": "SUPER_CHAT_MESSAGE_DELETE", "data": {"ids": [9988, "x"]}}
+    )
+    assert isinstance(deleted, SuperChatDeleteEvent)
+    assert deleted.ids == ["9988", "x"]
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +362,41 @@ async def test_dedup_same_dm_v2_twice() -> None:
     assert len(received) == 1
 
 
+async def test_dedup_eviction_keeps_deque_and_set_consistent() -> None:
+    """An evicted id becomes valid again while recent ids remain deduped."""
+    sess = RoomSession(bili_client=_stub_bili(), _dedup_size=2)
+    received: list[BridgeEvent] = []
+
+    async def cb(event: BridgeEvent) -> None:
+        received.append(event)
+
+    await sess.add_callback(cb)
+
+    def raw(msg_id: str) -> dict[str, object]:
+        return {
+            "cmd": "DANMU_MSG",
+            "dm_v2": msg_id,
+            "info": [
+                [0, 0, 0, 0, 1700000000, 0],
+                msg_id,
+                [1, "u", 0, 0, 0],
+            ],
+        }
+
+    await sess._on_raw_message(raw("a"))
+    await sess._on_raw_message(raw("b"))
+    await sess._on_raw_message(raw("b"))  # still recent: duplicate
+    await sess._on_raw_message(raw("c"))  # evicts a
+    await sess._on_raw_message(raw("a"))  # a is valid again
+
+    assert [event.text for event in received if isinstance(event, DanmakuEvent)] == [
+        "a",
+        "b",
+        "c",
+        "a",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 8. connect(start=True) + disconnect → RoomStatusEvent broadcasts.
 # ---------------------------------------------------------------------------
@@ -347,6 +435,48 @@ async def test_connect_disconnect_updates_status_and_broadcasts() -> None:
     # Re-evaluate: disconnect appends a new RoomStatusEvent.
     status_events = [e for e in events if isinstance(e, RoomStatusEvent)]
     assert any(e.status == "disconnected" for e in status_events)
+
+
+async def test_connect_bootstraps_only_unexpired_super_chats() -> None:
+    """Room bootstrap seeds SCs that were purchased before WS connect."""
+    now = int(time.time())
+
+    class _BiliWithActiveSc:
+        async def get_active_super_chats(
+            self, room_id: int
+        ) -> list[dict[str, object]]:
+            assert room_id == 100
+            return [
+                {
+                    "id": 1,
+                    "uid": 7,
+                    "user_info": {"uname": "active"},
+                    "message": "still visible",
+                    "price": 100,
+                    "start_time": now,
+                    "end_time": now + 300,
+                    "time": 300,
+                },
+                {
+                    "id": 2,
+                    "uid": 8,
+                    "user_info": {"uname": "expired"},
+                    "message": "old",
+                    "price": 30,
+                    "start_time": now - 120,
+                    "end_time": now - 60,
+                    "time": 60,
+                },
+            ]
+
+    sess = RoomSession(
+        bili_client=cast("BilibiliClient", _BiliWithActiveSc())
+    )
+    with patch_real_dc():
+        ok = await sess.connect(100)
+
+    assert ok is True
+    assert [event.id for event in sess.initial_super_chats] == ["1"]
 
 
 # ---------------------------------------------------------------------------

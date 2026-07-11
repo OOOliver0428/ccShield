@@ -11,7 +11,6 @@ behavioural assertions construct a fresh ``Settings`` against a
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -133,7 +132,7 @@ def test_missing_env_file_uses_empty_defaults(tmp_path: Path) -> None:
 # Test 6 — No dual-path / PyInstaller logic in the config module.
 # --------------------------------------------------------------------------- #
 def test_no_dual_path_logic_in_app() -> None:
-    """`grep -rE 'sys\\.frozen|getattr\\(sys,\\s*['\\"]frozen|get_external_path|resource_path' app/` must be empty.
+    """The app package must not contain legacy dual-path config logic.
 
     Rejecting the ccShield config.py anti-pattern (lines 8-44) which branched
     on PyInstaller's bundled-binary detection (``sys.frozen`` /
@@ -149,20 +148,20 @@ def test_no_dual_path_logic_in_app() -> None:
     """
     if not CONFIG_FILE.exists():
         pytest.fail(f"{CONFIG_FILE} does not exist — TDD: write tests first, then impl")
-    result = subprocess.run(
-        [
-            "grep",
-            "-rE",
-            "sys\\.frozen|getattr\\(sys,\\s*['\"]frozen|get_external_path|resource_path",
-            "app/",
-        ],
-        cwd=str(BACKEND_ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
+    forbidden = re.compile(
+        r"sys\.frozen|getattr\(sys,\s*['\"]frozen|get_external_path|resource_path"
     )
-    assert result.returncode != 0 or result.stdout.strip() == "", (
-        f"Found forbidden dual-path logic in backend/app/:\n{result.stdout}"
+    findings: list[str] = []
+    for path in APP_DIR.rglob("*.py"):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            if forbidden.search(line):
+                findings.append(f"{path.relative_to(BACKEND_ROOT)}:{line_number}: {line}")
+
+    assert not findings, "Found forbidden dual-path logic in backend/app/:\n" + "\n".join(
+        findings
     )
 
 

@@ -4,13 +4,23 @@ import type { BridgeScEvent } from "../api/ws";
 import SuperChatItem from "./SuperChatItem.vue";
 
 function makeSc(overrides: Partial<BridgeScEvent> = {}): BridgeScEvent {
+  const now = Math.floor(Date.now() / 1000);
   return {
     type: "sc",
+    id: "sc-7",
     uid: 7,
     uname: "bob",
     text: "hi",
     price: 30,
-    ts: 1_700_000_000,
+    ts: now,
+    end_ts: now + 300,
+    duration: 300,
+    guard_level: 0,
+    medal: null,
+    background_color: "#EDF5FF",
+    background_bottom_color: "#2A60B2",
+    background_price_color: "#7497CD",
+    message_font_color: "#24476B",
     ...overrides,
   };
 }
@@ -42,5 +52,10 @@ describe("SuperChatItem.vue", () => {
     const ts = wrapper.find('[data-testid="sc-ts"]');
     expect(ts.exists()).toBe(true);
     expect(ts.text()).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it("renders the paid-message countdown", () => {
+    const wrapper = mount(SuperChatItem, { props: { sc: makeSc() } });
+    expect(wrapper.find('[data-testid="sc-remaining"]').text()).toContain("5分钟");
   });
 });
