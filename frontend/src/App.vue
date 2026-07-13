@@ -502,4 +502,43 @@ function handleBridgeEvent(event: BridgeEvent): void {
     letter-spacing: 1px;
   }
 }
+/*
+ * A rotated desktop monitor can report only 720-864 CSS pixels of width
+ * when Windows scaling is set to 125%-150%. Pointer capability keeps this
+ * layout separate from touch-first tablets with the same viewport size.
+ */
+@media (orientation: portrait) and (min-width: 680px) and (min-height: 900px) and (hover: hover) and (pointer: fine) {
+  .app-shell {
+    padding: 12px;
+  }
+  .authenticated-shell {
+    max-width: none;
+  }
+  .topbar {
+    gap: 10px;
+  }
+  .topbar-status {
+    margin-left: auto;
+  }
+  .user-card {
+    padding-left: 10px;
+  }
+  .welcome strong {
+    max-width: 108px;
+  }
+  .brand-caption {
+    letter-spacing: 1.15px;
+  }
+  .moderator-workspace {
+    height: max(720px, calc(100dvh - 339px));
+    min-height: 720px;
+    grid-template-columns: minmax(0, 1fr) clamp(288px, 30vw, 332px);
+  }
+  .moderation-sidebar {
+    min-height: 0;
+  }
+  .workspace-placeholder {
+    min-height: max(560px, calc(100dvh - 164px));
+  }
+}
 </style>

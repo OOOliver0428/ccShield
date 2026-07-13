@@ -369,4 +369,20 @@ async function onDisconnect(): Promise<void> {
     grid-column: 1 / -1;
   }
 }
+@media (orientation: portrait) and (min-width: 680px) and (min-height: 900px) and (hover: hover) and (pointer: fine) {
+  .is-connected .control-row {
+    position: absolute;
+    top: 94px;
+    right: 16px;
+    width: auto;
+  }
+  .room-info {
+    grid-template-columns: minmax(120px, 0.75fr) minmax(105px, 0.55fr) minmax(180px, 1.6fr);
+    padding-right: 110px;
+  }
+  .room-info-item {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+}
 </style>

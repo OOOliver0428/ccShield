@@ -547,4 +547,28 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
     min-height: 38px;
   }
 }
+@media (orientation: portrait) and (min-width: 680px) and (min-height: 900px) and (hover: hover) and (pointer: fine) {
+  .danmaku-list {
+    height: 100%;
+    min-height: 0;
+  }
+  .sc-panel {
+    max-height: 30%;
+  }
+  .row {
+    flex-wrap: nowrap;
+  }
+  .row-actions {
+    position: absolute;
+    margin-left: 0;
+    border: 1px solid var(--cc-border);
+    background: var(--cc-floating-background);
+    opacity: 0;
+    box-shadow: var(--cc-shadow-float);
+  }
+  .row:hover .row-actions,
+  .row:focus-within .row-actions {
+    opacity: 1;
+  }
+}
 </style>

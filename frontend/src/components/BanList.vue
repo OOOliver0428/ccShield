@@ -444,4 +444,10 @@ async function onUnban(entry: BanEntry): Promise<void> {
     min-height: 36px;
   }
 }
+@media (orientation: portrait) and (min-width: 680px) and (min-height: 900px) and (hover: hover) and (pointer: fine) {
+  .ban-list {
+    height: 100%;
+    min-height: 0;
+  }
+}
 </style>
