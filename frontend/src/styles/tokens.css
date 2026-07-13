@@ -23,6 +23,10 @@
   --cc-danger-emphasis: #ff9aa5;
   --cc-primary-emphasis: #cdd3ff;
   --cc-success-emphasis: #a8ead0;
+  --cc-verified-detail-bg: #0b1718;
+  --cc-verified-detail-border: rgb(129 231 188 / 24%);
+  --cc-verified-detail-label: #9db5ad;
+  --cc-verified-detail-text: #f5fff9;
   --cc-message-text: #dce1e9;
   --cc-page-background:
     radial-gradient(circle at 8% -12%, rgb(91 105 226 / 18%), transparent 34rem),
@@ -121,6 +125,10 @@
   --cc-danger-emphasis: #c83f52;
   --cc-primary-emphasis: #4656b9;
   --cc-success-emphasis: #187b59;
+  --cc-verified-detail-bg: #f4fbf7;
+  --cc-verified-detail-border: rgb(23 132 92 / 18%);
+  --cc-verified-detail-label: #5f786e;
+  --cc-verified-detail-text: #17382d;
   --cc-message-text: #303b50;
   --cc-page-background:
     radial-gradient(circle at 8% -12%, rgb(91 105 226 / 12%), transparent 34rem),

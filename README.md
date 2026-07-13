@@ -4,7 +4,7 @@
 
 当前版本：**v2.0.2**
 
-![ccShield 金毛骑士产品图标](assets/brand/ccshield-product-mark-preview.png)
+![ccShield 金毛骑士产品图标](frontend/public/brand/ccshield-product-mark.png)
 
 ## 一键启动
 

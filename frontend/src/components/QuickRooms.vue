@@ -449,21 +449,23 @@ function liveLabel(status: number | undefined): string {
 }
 .verified-card dl > div {
   padding: 8px 9px;
+  border: 1px solid var(--cc-verified-detail-border);
   border-radius: 9px;
-  background: var(--cc-fill-faint);
+  background: var(--cc-verified-detail-bg);
 }
 .verified-card .title-row {
   grid-column: 1 / -1;
 }
 .verified-card dt {
-  color: var(--cc-text-muted);
+  color: var(--cc-verified-detail-label);
   font-size: 9px;
 }
 .verified-card dd {
   overflow: hidden;
   margin: 3px 0 0;
-  color: var(--cc-text);
+  color: var(--cc-verified-detail-text);
   font-size: 11px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
