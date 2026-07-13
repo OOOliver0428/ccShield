@@ -1,1 +1,1139 @@
-{"openapi":"3.1.0","info":{"title":"reccshield backend","description":"Bilibili live-room moderator tool — backend API.","version":"0.1.0"},"paths":{"/api/auth/bootstrap":{"get":{"tags":["auth"],"summary":"Hand the frontend the LOCAL_TOKEN (single-user-local bootstrap)","description":"Return the current ``LOCAL_TOKEN`` so the SPA can attach it to\nevery subsequent ``/api/*`` call.\n\nThe endpoint is **exempt from the LOCAL_TOKEN gate** (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) — otherwise the\nfrontend would have no way to learn the token on a freshly opened\npage. The Host guard still runs: only a request whose Host is\n``localhost`` or ``127.0.0.1`` can lift the token, so an external\norigin cannot ride the CORS allow-list to read it.\n\nTrust model: LOCAL_TOKEN is a single-user-local secret whose job is\nCSRF / DNS-rebinding defence, not secrecy from the developer's own\nmachine. Anything that can serve a page from ``localhost`` already\nhas full read/write access to the same machine's cookies.","operationId":"auth_bootstrap_api_auth_bootstrap_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/BootstrapResponse"}}}}}}},"/api/auth/qr/start":{"post":{"tags":["auth"],"summary":"Start the B站 QR-login flow","description":"Call :func:`qr_generate` and return the QR code payload.\n\nThe UI renders the QR (an image) and the user scans it with the\nB站 mobile app. The returned ``qrcode_key`` is opaque to the\nclient — it is passed back on each ``/qr/poll`` call.","operationId":"qr_start_api_auth_qr_start_post","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/QrStartResponse"}}}}}}},"/api/auth/qr/poll":{"get":{"tags":["auth"],"summary":"Poll B站 for the QR-login state","description":"Poll B站 for the current state of an in-flight QR login.\n\nTranslates the B站 error codes into a single ``status`` field:\n\n- :class:`QrAwaitingScanError`    → ``scanning``\n- :class:`QrAwaitingConfirmError` → ``confirmed``\n- :class:`QrExpiredError`         → ``expired``\n- success path                    → ``success`` + persist + state refresh\n\nAny other exception is re-raised — those signal a real backend\nproblem (network down, B站 format change) and the client should\nsurface them as 5xx.","operationId":"qr_poll_route_api_auth_qr_poll_get","parameters":[{"name":"qrcode_key","in":"query","required":true,"schema":{"type":"string","title":"Qrcode Key"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/QrPollResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/api/auth/status":{"get":{"tags":["auth"],"summary":"Read the current auth state","description":"Return the current :class:`AuthState` value as a string.\n\nThe state is read from the :data:`app.auth.session.auth_session`\nsingleton on every call (no caching), so the response always\nreflects the latest evaluation.","operationId":"auth_status_api_auth_status_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/AuthStatusResponse"}}}}}}},"/api/auth/me":{"get":{"tags":["auth"],"summary":"Return the currently authenticated user's identity","description":"Surface ``uname`` / ``mid`` to the SPA after QR or manual login.\n\nGating:\n\n- **401** when the auth session is not AUTHENTICATED (cold start,\n  expired cookies, or login still in flight).\n- **401** when the ``/nav`` call returns no data (cookies were marked\n  valid but the API rejected them — e.g. token rotated server-side).\n\nOn the happy path we return ``{uname, mid}`` so the frontend can\nrender the logged-in badge without a separate round-trip.","operationId":"auth_me_api_auth_me_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MeResponse"}}}}}}},"/api/auth/manual":{"post":{"tags":["auth"],"summary":"Save user-pasted cookies (Plan B fallback)","description":"Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.\n\nOn :class:`LoginIncompleteError` (the pasted cookies fail the\n``/nav`` validation or the response is malformed) we surface\nHTTP 400. The caller's existing ``.env`` is left untouched — the\n:func:`save_cookies_manual` helper does the same guarantee at the\npersistence layer.\n\nBug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,\nfetch one from ``/x/frontend/finger/spi`` and thread it through to\nboth ``save_cookies_manual`` and ``mark_authenticated_after_login``.\nIf the user did provide a buvid3 we trust it verbatim (it's the\ncookie they extracted from a real browser session, which is what\nB站 actually expects). fetch_buvid3 is best-effort and never raises.","operationId":"manual_cookies_api_auth_manual_post","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ManualCookiesRequest"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ManualCookiesResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/api/rooms/resolve":{"get":{"tags":["rooms"],"summary":"Resolve a B站 room short id or real id to canonical info","description":"Translate ``input`` (real or short id) via B站 HTTP client.\n\nReturns 404 when :meth:`BilibiliClient.resolve_room_id` cannot\nresolve the id (B站 returned a payload without a ``room_id``).","operationId":"resolve_room_route_api_rooms_resolve_get","parameters":[{"name":"input","in":"query","required":true,"schema":{"type":"integer","title":"Input"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ResolveRoomResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/api/rooms/start":{"post":{"tags":["rooms"],"summary":"Connect to a live room","description":"Build a :class:`RoomSession`, connect, install a bridge singleton.\n\nFailure path: 400 if ``session.connect`` returns ``False``. The\nsingleton bridge is NOT installed in that case — a failed start\nmust not leave a half-wired bridge behind.","operationId":"start_room_route_api_rooms_start_post","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/StartRoomRequest"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/StartRoomResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/api/rooms/stop":{"post":{"tags":["rooms"],"summary":"Disconnect the live-room bridge","description":"Disconnect the active session and clear the bridge singleton.\n\nIdempotent: with no active bridge the call is a no-op and still\nreturns ``{ok: true}``.","operationId":"stop_room_route_api_rooms_stop_post","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/StopRoomResponse"}}}}}}},"/api/rooms":{"get":{"tags":["rooms"],"summary":"Read the current room + bridge state","description":"Return the active room_id + status (``None``/``disconnected`` when idle).","operationId":"get_room_route_api_rooms_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/RoomStatusResponse"}}}}}}},"/api/ban":{"post":{"tags":["ban"],"summary":"Ban a user in the given room","description":"Ban ``body.uid`` in ``body.room_id`` for ``body.hour`` hours.\n\nRequires an authenticated session. On success, updates the live\n:class:`BanListManager` if it is currently running for the same\nroom so every connected WS client receives a ``ban_added`` delta.","operationId":"post_ban_route_api_ban_post","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/BanRequest"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/OkResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}},"delete":{"tags":["ban"],"summary":"Unban a user by block id","description":"Unban ``body.uid`` in ``body.room_id`` using ``body.block_id``.\n\nRequires an authenticated session. On success, broadcasts a\n``ban_removed`` delta through the running :class:`BanListManager`.","operationId":"delete_ban_route_api_ban_delete","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UnbanRequest"}}},"required":true},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/OkResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/api/ban-list/{room_id}":{"get":{"tags":["ban"],"summary":"Read the current ban list for a room","description":"Return the ban list for ``room_id``.\n\nReads from the running :class:`BanListManager`'s local state when\nit is currently started for ``room_id`` (the cheap path — no\nnetwork round-trip). Falls back to\n:meth:`BilibiliClient.get_ban_list` otherwise (a fresh fetch\npaginates up to ``_BAN_LIST_MAX_PAGES``).","operationId":"get_ban_list_route_api_ban_list__room_id__get","parameters":[{"name":"room_id","in":"path","required":true,"schema":{"type":"integer","title":"Room Id"}},{"name":"refresh","in":"query","required":false,"schema":{"type":"boolean","default":false,"title":"Refresh"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/BanListResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/health":{"get":{"tags":["meta"],"summary":"Health","description":"Lightweight health probe used by liveness/readiness checks.\n\nExempt from the LOCAL_TOKEN + host guard (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) so a\ncontainer orchestrator can probe the app without the bearer\ntoken.","operationId":"health_health_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"additionalProperties":{"type":"string"},"type":"object","title":"Response Health Health Get"}}}}}}}},"components":{"schemas":{"AuthStatusResponse":{"properties":{"state":{"type":"string","title":"State"}},"additionalProperties":false,"type":"object","required":["state"],"title":"AuthStatusResponse","description":"Response body for ``GET /api/auth/status``."},"BanEntryResponse":{"properties":{"block_id":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Block Id"},"uid":{"type":"integer","title":"Uid"},"uname":{"type":"string","title":"Uname"},"hour":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Hour"},"reason":{"type":"string","title":"Reason"},"created_at":{"anyOf":[{"type":"integer"},{"type":"string"},{"type":"null"}],"title":"Created At"},"expires_at":{"anyOf":[{"type":"integer"},{"type":"string"},{"type":"null"}],"title":"Expires At"},"pending":{"type":"boolean","title":"Pending"}},"additionalProperties":false,"type":"object","required":["block_id","uid","uname","hour","reason","created_at","expires_at","pending"],"title":"BanEntryResponse","description":"Stable public shape for one B站 silent-user record."},"BanListResponse":{"properties":{"room_id":{"type":"integer","title":"Room Id"},"bans":{"items":{"$ref":"#/components/schemas/BanEntryResponse"},"type":"array","title":"Bans"}},"type":"object","required":["room_id","bans"],"title":"BanListResponse","description":"Response body for ``GET /api/ban-list/{room_id}``.\n\nRaw B站 aliases are normalized by :mod:`app.room.banlist` before\nthey cross this boundary, so every browser receives the same typed\nfields and can safely gate 解禁 on ``block_id`` / ``pending``."},"BanRequest":{"properties":{"room_id":{"type":"integer","exclusiveMinimum":0.0,"title":"Room Id"},"uid":{"type":"integer","exclusiveMinimum":0.0,"title":"Uid"},"hour":{"type":"integer","enum":[0,1,24,168,720],"title":"Hour"},"reason":{"type":"string","maxLength":200,"title":"Reason","default":""},"uname":{"type":"string","maxLength":100,"title":"Uname","default":""}},"additionalProperties":false,"type":"object","required":["room_id","uid","hour"],"title":"BanRequest","description":"Request body for ``POST /api/ban``.\n\n``extra=\"forbid\"`` so a typo'd field (e.g. ``hours``) is rejected\nwith 422 instead of silently ignored — moderator actions must not\nsilently drop a parameter the operator thinks they sent."},"BootstrapResponse":{"properties":{"token":{"type":"string","title":"Token"}},"additionalProperties":false,"type":"object","required":["token"],"title":"BootstrapResponse","description":"Response body for ``GET /api/auth/bootstrap``.\n\nReturns the current :attr:`Settings.LOCAL_TOKEN` so the frontend can\nattach it as ``Authorization: Bearer …`` on every subsequent call.\nThe route is exempted from the LOCAL_TOKEN gate (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) but the Host guard\nstill applies — only a page served from ``localhost`` / ``127.0.0.1``\ncan lift the token, which is the single-user-local trust model."},"HTTPValidationError":{"properties":{"detail":{"items":{"$ref":"#/components/schemas/ValidationError"},"type":"array","title":"Detail"}},"type":"object","title":"HTTPValidationError"},"ManualCookiesRequest":{"properties":{"sessdata":{"type":"string","minLength":1,"title":"Sessdata"},"bili_jct":{"type":"string","minLength":1,"title":"Bili Jct"},"buvid3":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Buvid3"}},"additionalProperties":false,"type":"object","required":["sessdata","bili_jct"],"title":"ManualCookiesRequest","description":"Request body for ``POST /api/auth/manual`` (Plan B)."},"ManualCookiesResponse":{"properties":{"uname":{"type":"string","title":"Uname"},"mid":{"type":"integer","title":"Mid"}},"additionalProperties":false,"type":"object","required":["uname","mid"],"title":"ManualCookiesResponse","description":"Response body for ``POST /api/auth/manual`` on success."},"MeResponse":{"properties":{"uname":{"type":"string","title":"Uname"},"mid":{"type":"integer","title":"Mid"}},"additionalProperties":false,"type":"object","required":["uname","mid"],"title":"MeResponse","description":"Response body for ``GET /api/auth/me``.\n\nCarries the minimal user identity the SPA needs to display after a\nsuccessful login (QR or manual). ``uname`` and ``mid`` come from the\n``/x/web-interface/nav`` payload."},"OkResponse":{"properties":{"ok":{"type":"boolean","title":"Ok","default":true}},"additionalProperties":false,"type":"object","title":"OkResponse","description":"Response body for ``POST`` / ``DELETE /api/ban`` on success."},"QrPollResponse":{"properties":{"status":{"type":"string","enum":["scanning","confirmed","expired","success"],"title":"Status"}},"additionalProperties":false,"type":"object","required":["status"],"title":"QrPollResponse","description":"Response body for ``GET /api/auth/qr/poll``.\n\n``status`` is one of:\n\n- ``\"scanning\"`` — B站 code 86101; the user has not scanned the QR yet.\n- ``\"confirmed\"`` — B站 code 86090; scanned, awaiting phone confirm.\n- ``\"expired\"``  — B站 code 86038; the QR expired, regenerate.\n- ``\"success\"``  — login complete; cookies are now persisted."},"QrStartResponse":{"properties":{"qrcode_url":{"type":"string","title":"Qrcode Url"},"qrcode_key":{"type":"string","title":"Qrcode Key"}},"additionalProperties":false,"type":"object","required":["qrcode_url","qrcode_key"],"title":"QrStartResponse","description":"Response body for ``POST /api/auth/qr/start``."},"ResolveRoomResponse":{"properties":{"room_id":{"type":"integer","title":"Room Id"},"short_id":{"type":"integer","title":"Short Id","default":0},"uid":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Uid"},"title":{"type":"string","title":"Title","default":""},"uname":{"type":"string","title":"Uname","default":""},"live_status":{"type":"integer","title":"Live Status","default":0},"is_short_id":{"type":"boolean","title":"Is Short Id","default":false}},"type":"object","required":["room_id"],"title":"ResolveRoomResponse","description":"Response body for ``GET /api/rooms/resolve``.\n\n``extra=\"ignore\"`` because B站's payload can carry extra fields that\nare useful for the UI (description, area_id, ...) but we only promise\nthe typed surface here."},"RoomStatusResponse":{"properties":{"current":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Current"},"status":{"type":"string","title":"Status"}},"additionalProperties":false,"type":"object","required":["current","status"],"title":"RoomStatusResponse","description":"Response body for ``GET /api/rooms``."},"StartRoomRequest":{"properties":{"room_id":{"type":"integer","exclusiveMinimum":0.0,"title":"Room Id","description":"Real or short room id"}},"additionalProperties":false,"type":"object","required":["room_id"],"title":"StartRoomRequest","description":"Request body for ``POST /api/rooms/start``."},"StartRoomResponse":{"properties":{"room_id":{"type":"integer","title":"Room Id"},"title":{"type":"string","title":"Title","default":""}},"type":"object","required":["room_id"],"title":"StartRoomResponse","description":"Response body for ``POST /api/rooms/start`` on success."},"StopRoomResponse":{"properties":{"ok":{"type":"boolean","title":"Ok","default":true}},"additionalProperties":false,"type":"object","title":"StopRoomResponse","description":"Response body for ``POST /api/rooms/stop``."},"UnbanRequest":{"properties":{"room_id":{"type":"integer","exclusiveMinimum":0.0,"title":"Room Id"},"block_id":{"type":"integer","exclusiveMinimum":0.0,"title":"Block Id"},"uid":{"type":"integer","exclusiveMinimum":0.0,"title":"Uid"}},"additionalProperties":false,"type":"object","required":["room_id","block_id","uid"],"title":"UnbanRequest","description":"Request body for ``DELETE /api/ban``."},"ValidationError":{"properties":{"loc":{"items":{"anyOf":[{"type":"string"},{"type":"integer"}]},"type":"array","title":"Location"},"msg":{"type":"string","title":"Message"},"type":{"type":"string","title":"Error Type"},"input":{"title":"Input"},"ctx":{"type":"object","title":"Context"}},"type":"object","required":["loc","msg","type"],"title":"ValidationError"}}}}
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "reccshield backend",
+    "description": "Bilibili live-room moderator tool — backend API.",
+    "version": "2.0.2"
+  },
+  "paths": {
+    "/api/auth/bootstrap": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Hand the frontend the LOCAL_TOKEN (single-user-local bootstrap)",
+        "description": "Return the current ``LOCAL_TOKEN`` so the SPA can attach it to\nevery subsequent ``/api/*`` call.\n\nThe endpoint is **exempt from the LOCAL_TOKEN gate** (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) — otherwise the\nfrontend would have no way to learn the token on a freshly opened\npage. The Host guard still runs: only a request whose Host is\n``localhost`` or ``127.0.0.1`` can lift the token, so an external\norigin cannot ride the CORS allow-list to read it.\n\nTrust model: LOCAL_TOKEN is a single-user-local secret whose job is\nCSRF / DNS-rebinding defence, not secrecy from the developer's own\nmachine. Anything that can serve a page from ``localhost`` already\nhas full read/write access to the same machine's cookies.",
+        "operationId": "auth_bootstrap_api_auth_bootstrap_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/qr/start": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Start the B站 QR-login flow",
+        "description": "Call :func:`qr_generate` and return the QR code payload.\n\nThe UI renders the QR (an image) and the user scans it with the\nB站 mobile app. The returned ``qrcode_key`` is opaque to the\nclient — it is passed back on each ``/qr/poll`` call.",
+        "operationId": "qr_start_api_auth_qr_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/qr/poll": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Poll B站 for the QR-login state",
+        "description": "Poll B站 for the current state of an in-flight QR login.\n\nTranslates the B站 error codes into a single ``status`` field:\n\n- :class:`QrAwaitingScanError`    → ``scanning``\n- :class:`QrAwaitingConfirmError` → ``confirmed``\n- :class:`QrExpiredError`         → ``expired``\n- success path                    → ``success`` + persist + state refresh\n\nAny other exception is re-raised — those signal a real backend\nproblem (network down, B站 format change) and the client should\nsurface them as 5xx.",
+        "operationId": "qr_poll_route_api_auth_qr_poll_get",
+        "parameters": [
+          {
+            "name": "qrcode_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Qrcode Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrPollResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/status": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Read the current auth state",
+        "description": "Return the current :class:`AuthState` value as a string.\n\nThe state is read from the :data:`app.auth.session.auth_session`\nsingleton on every call (no caching), so the response always\nreflects the latest evaluation.",
+        "operationId": "auth_status_api_auth_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Return the currently authenticated user's identity",
+        "description": "Surface ``uname`` / ``mid`` to the SPA after QR or manual login.\n\nGating:\n\n- **401** when the auth session is not AUTHENTICATED (cold start,\n  expired cookies, or login still in flight).\n- **401** when the ``/nav`` call returns no data (cookies were marked\n  valid but the API rejected them — e.g. token rotated server-side).\n\nOn the happy path we return ``{uname, mid}`` so the frontend can\nrender the logged-in badge without a separate round-trip.",
+        "operationId": "auth_me_api_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/manual": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Save user-pasted cookies (Plan B fallback)",
+        "description": "Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.\n\nOn :class:`LoginIncompleteError` (the pasted cookies fail the\n``/nav`` validation or the response is malformed) we surface\nHTTP 400. The caller's existing ``.env`` is left untouched — the\n:func:`save_cookies_manual` helper does the same guarantee at the\npersistence layer.\n\nBug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,\nfetch one from ``/x/frontend/finger/spi`` and thread it through to\nboth ``save_cookies_manual`` and ``mark_authenticated_after_login``.\nIf the user did provide a buvid3 we trust it verbatim (it's the\ncookie they extracted from a real browser session, which is what\nB站 actually expects). fetch_buvid3 is best-effort and never raises.",
+        "operationId": "manual_cookies_api_auth_manual_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualCookiesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualCookiesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rooms/resolve": {
+      "get": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "Resolve a B站 room short id or real id to canonical info",
+        "description": "Translate ``input`` (real or short id) via B站 HTTP client.\n\nReturns 404 when :meth:`BilibiliClient.resolve_room_id` cannot\nresolve the id (B站 returned a payload without a ``room_id``).",
+        "operationId": "resolve_room_route_api_rooms_resolve_get",
+        "parameters": [
+          {
+            "name": "input",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Input"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveRoomResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rooms/start": {
+      "post": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "Connect to a live room",
+        "description": "Build a :class:`RoomSession`, connect, install a bridge singleton.\n\nFailure path: 400 if ``session.connect`` returns ``False``. The\nsingleton bridge is NOT installed in that case — a failed start\nmust not leave a half-wired bridge behind.",
+        "operationId": "start_room_route_api_rooms_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRoomRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartRoomResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rooms/stop": {
+      "post": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "Disconnect the live-room bridge",
+        "description": "Disconnect the active session and clear the bridge singleton.\n\nIdempotent: with no active bridge the call is a no-op and still\nreturns ``{ok: true}``.",
+        "operationId": "stop_room_route_api_rooms_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopRoomResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rooms": {
+      "get": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "Read the current room + bridge state",
+        "description": "Return the active room_id + status (``None``/``disconnected`` when idle).",
+        "operationId": "get_room_route_api_rooms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quick-rooms": {
+      "get": {
+        "tags": [
+          "quick-rooms"
+        ],
+        "summary": "List locally configured quick room shortcuts",
+        "operationId": "list_quick_rooms_route_api_quick_rooms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickRoomListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "quick-rooms"
+        ],
+        "summary": "Verify and append a quick room shortcut",
+        "operationId": "add_quick_room_route_api_quick_rooms_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddQuickRoomRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickRoomListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ban": {
+      "post": {
+        "tags": [
+          "ban"
+        ],
+        "summary": "Ban a user in the given room",
+        "description": "Ban ``body.uid`` in ``body.room_id`` for ``body.hour`` hours.\n\nRequires an authenticated session. On success, updates the live\n:class:`BanListManager` if it is currently running for the same\nroom so every connected WS client receives a ``ban_added`` delta.",
+        "operationId": "post_ban_route_api_ban_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ban"
+        ],
+        "summary": "Unban a user by block id",
+        "description": "Unban ``body.uid`` in ``body.room_id`` using ``body.block_id``.\n\nRequires an authenticated session. On success, broadcasts a\n``ban_removed`` delta through the running :class:`BanListManager`.",
+        "operationId": "delete_ban_route_api_ban_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnbanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ban-list/{room_id}": {
+      "get": {
+        "tags": [
+          "ban"
+        ],
+        "summary": "Read the current ban list for a room",
+        "description": "Return the ban list for ``room_id``.\n\nReads from the running :class:`BanListManager`'s local state when\nit is currently started for ``room_id`` (the cheap path — no\nnetwork round-trip). Falls back to\n:meth:`BilibiliClient.get_ban_list` otherwise (a fresh fetch\npaginates up to ``_BAN_LIST_MAX_PAGES``).",
+        "operationId": "get_ban_list_route_api_ban_list__room_id__get",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Room Id"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Refresh"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BanListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Health",
+        "description": "Lightweight health probe used by liveness/readiness checks.\n\nExempt from the LOCAL_TOKEN + host guard (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) so a\ncontainer orchestrator can probe the app without the bearer\ntoken.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddQuickRoomRequest": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Room Id",
+            "description": "Real or short room id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "room_id"
+        ],
+        "title": "AddQuickRoomRequest",
+        "description": "A real or short room id to verify and persist."
+      },
+      "AuthStatusResponse": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "AuthStatusResponse",
+        "description": "Response body for ``GET /api/auth/status``."
+      },
+      "BanEntryResponse": {
+        "properties": {
+          "block_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Id"
+          },
+          "uid": {
+            "type": "integer",
+            "title": "Uid"
+          },
+          "uname": {
+            "type": "string",
+            "title": "Uname"
+          },
+          "hour": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hour"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "pending": {
+            "type": "boolean",
+            "title": "Pending"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "block_id",
+          "uid",
+          "uname",
+          "hour",
+          "reason",
+          "created_at",
+          "expires_at",
+          "pending"
+        ],
+        "title": "BanEntryResponse",
+        "description": "Stable public shape for one B站 silent-user record."
+      },
+      "BanListResponse": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "title": "Room Id"
+          },
+          "bans": {
+            "items": {
+              "$ref": "#/components/schemas/BanEntryResponse"
+            },
+            "type": "array",
+            "title": "Bans"
+          }
+        },
+        "type": "object",
+        "required": [
+          "room_id",
+          "bans"
+        ],
+        "title": "BanListResponse",
+        "description": "Response body for ``GET /api/ban-list/{room_id}``.\n\nRaw B站 aliases are normalized by :mod:`app.room.banlist` before\nthey cross this boundary, so every browser receives the same typed\nfields and can safely gate 解禁 on ``block_id`` / ``pending``."
+      },
+      "BanRequest": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Room Id"
+          },
+          "uid": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Uid"
+          },
+          "hour": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              24,
+              168,
+              720
+            ],
+            "title": "Hour"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Reason",
+            "default": ""
+          },
+          "uname": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Uname",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "room_id",
+          "uid",
+          "hour"
+        ],
+        "title": "BanRequest",
+        "description": "Request body for ``POST /api/ban``.\n\n``extra=\"forbid\"`` so a typo'd field (e.g. ``hours``) is rejected\nwith 422 instead of silently ignored — moderator actions must not\nsilently drop a parameter the operator thinks they sent."
+      },
+      "BootstrapResponse": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "BootstrapResponse",
+        "description": "Response body for ``GET /api/auth/bootstrap``.\n\nReturns the current :attr:`Settings.LOCAL_TOKEN` so the frontend can\nattach it as ``Authorization: Bearer …`` on every subsequent call.\nThe route is exempted from the LOCAL_TOKEN gate (see\n:data:`app.api.middleware._EXEMPT_PATH_PREFIXES`) but the Host guard\nstill applies — only a page served from ``localhost`` / ``127.0.0.1``\ncan lift the token, which is the single-user-local trust model."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ManualCookiesRequest": {
+        "properties": {
+          "sessdata": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Sessdata"
+          },
+          "bili_jct": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Bili Jct"
+          },
+          "buvid3": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buvid3"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sessdata",
+          "bili_jct"
+        ],
+        "title": "ManualCookiesRequest",
+        "description": "Request body for ``POST /api/auth/manual`` (Plan B)."
+      },
+      "ManualCookiesResponse": {
+        "properties": {
+          "uname": {
+            "type": "string",
+            "title": "Uname"
+          },
+          "mid": {
+            "type": "integer",
+            "title": "Mid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "uname",
+          "mid"
+        ],
+        "title": "ManualCookiesResponse",
+        "description": "Response body for ``POST /api/auth/manual`` on success."
+      },
+      "MeResponse": {
+        "properties": {
+          "uname": {
+            "type": "string",
+            "title": "Uname"
+          },
+          "mid": {
+            "type": "integer",
+            "title": "Mid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "uname",
+          "mid"
+        ],
+        "title": "MeResponse",
+        "description": "Response body for ``GET /api/auth/me``.\n\nCarries the minimal user identity the SPA needs to display after a\nsuccessful login (QR or manual). ``uname`` and ``mid`` come from the\n``/x/web-interface/nav`` payload."
+      },
+      "OkResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "OkResponse",
+        "description": "Response body for ``POST`` / ``DELETE /api/ban`` on success."
+      },
+      "QrPollResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "scanning",
+              "confirmed",
+              "expired",
+              "success"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "QrPollResponse",
+        "description": "Response body for ``GET /api/auth/qr/poll``.\n\n``status`` is one of:\n\n- ``\"scanning\"`` — B站 code 86101; the user has not scanned the QR yet.\n- ``\"confirmed\"`` — B站 code 86090; scanned, awaiting phone confirm.\n- ``\"expired\"``  — B站 code 86038; the QR expired, regenerate.\n- ``\"success\"``  — login complete; cookies are now persisted."
+      },
+      "QrStartResponse": {
+        "properties": {
+          "qrcode_url": {
+            "type": "string",
+            "title": "Qrcode Url"
+          },
+          "qrcode_key": {
+            "type": "string",
+            "title": "Qrcode Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "qrcode_url",
+          "qrcode_key"
+        ],
+        "title": "QrStartResponse",
+        "description": "Response body for ``POST /api/auth/qr/start``."
+      },
+      "QuickRoomListResponse": {
+        "properties": {
+          "rooms": {
+            "items": {
+              "$ref": "#/components/schemas/QuickRoomRecord"
+            },
+            "type": "array",
+            "title": "Rooms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rooms"
+        ],
+        "title": "QuickRoomListResponse"
+      },
+      "QuickRoomRecord": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Room Id"
+          },
+          "short_id": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Short Id",
+            "default": 0
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "uname": {
+            "type": "string",
+            "title": "Uname",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "live_status": {
+            "type": "integer",
+            "title": "Live Status",
+            "default": 0
+          },
+          "added_at": {
+            "type": "string",
+            "title": "Added At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "room_id",
+          "added_at"
+        ],
+        "title": "QuickRoomRecord",
+        "description": "A verified, canonical live-room shortcut stored on disk."
+      },
+      "ResolveRoomResponse": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "title": "Room Id"
+          },
+          "short_id": {
+            "type": "integer",
+            "title": "Short Id",
+            "default": 0
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "uname": {
+            "type": "string",
+            "title": "Uname",
+            "default": ""
+          },
+          "live_status": {
+            "type": "integer",
+            "title": "Live Status",
+            "default": 0
+          },
+          "is_short_id": {
+            "type": "boolean",
+            "title": "Is Short Id",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "room_id"
+        ],
+        "title": "ResolveRoomResponse",
+        "description": "Response body for ``GET /api/rooms/resolve``.\n\n``extra=\"ignore\"`` because B站's payload can carry extra fields that\nare useful for the UI (description, area_id, ...) but we only promise\nthe typed surface here."
+      },
+      "RoomStatusResponse": {
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current",
+          "status"
+        ],
+        "title": "RoomStatusResponse",
+        "description": "Response body for ``GET /api/rooms``."
+      },
+      "StartRoomRequest": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Room Id",
+            "description": "Real or short room id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "room_id"
+        ],
+        "title": "StartRoomRequest",
+        "description": "Request body for ``POST /api/rooms/start``."
+      },
+      "StartRoomResponse": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "title": "Room Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "room_id"
+        ],
+        "title": "StartRoomResponse",
+        "description": "Response body for ``POST /api/rooms/start`` on success."
+      },
+      "StopRoomResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StopRoomResponse",
+        "description": "Response body for ``POST /api/rooms/stop``."
+      },
+      "UnbanRequest": {
+        "properties": {
+          "room_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Room Id"
+          },
+          "block_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Block Id"
+          },
+          "uid": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Uid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "room_id",
+          "block_id",
+          "uid"
+        ],
+        "title": "UnbanRequest",
+        "description": "Request body for ``DELETE /api/ban``."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

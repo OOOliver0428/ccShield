@@ -37,6 +37,13 @@ export interface ResolveRoomResponse {
   is_short_id?: boolean;
 }
 
+export interface RoomShortcutMetadata {
+  room_id: number;
+  short_id?: number;
+  uname?: string;
+  title?: string;
+}
+
 interface StartRoomResponse {
   room_id: number;
   title?: string;
@@ -87,9 +94,22 @@ export const useRoomStore = defineStore("room", () => {
       return true;
     } catch (err) {
       status.value = "disconnected";
+      currentRoomId.value = null;
+      resolvedTitle.value = "";
+      resolvedUname.value = "";
+      resolvedShortId.value = null;
       error.value = (err as Error).message;
       return false;
     }
+  }
+
+  function prepareShortcut(shortcut: RoomShortcutMetadata): void {
+    currentRoomId.value = shortcut.room_id;
+    roomId.value = String(shortcut.room_id);
+    resolvedShortId.value = shortcut.short_id ?? shortcut.room_id;
+    resolvedTitle.value = shortcut.title ?? "";
+    resolvedUname.value = shortcut.uname ?? "";
+    error.value = null;
   }
 
   async function disconnect(): Promise<void> {
@@ -135,6 +155,7 @@ export const useRoomStore = defineStore("room", () => {
     resolvedShortId,
     resolve,
     connect,
+    prepareShortcut,
     disconnect,
     applyRoomStatus,
   };

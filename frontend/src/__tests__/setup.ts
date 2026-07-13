@@ -10,6 +10,9 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 export const handlers = [
+  // Quick-room configuration is mounted throughout the authenticated shell.
+  // Most unrelated component tests expect the default empty local config.
+  http.get("*/api/quick-rooms", () => HttpResponse.json({ rooms: [] })),
   // 501 by default for any /api/* call a test forgot to mock.
   http.get("*/api/*", () =>
     HttpResponse.json({ detail: "not mocked" }, { status: 501 }),

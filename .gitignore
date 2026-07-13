@@ -22,6 +22,9 @@ dist/
 .env.*
 !.env.example
 
+# User-local quick room shortcuts (edit this file manually to remove entries)
+config/quick_rooms.json
+
 # Backend test fixtures (kept out of accidental commits but allow dir creation)
 tests/fixtures/*.json
 
@@ -33,6 +36,11 @@ tests/fixtures/*.json
 
 # Codegraph runtime cache (symlink to ~/.omo/codegraph/...)
 .codegraph
+
+# Local Codex/pet validation artifacts and package-manager cache
+.codex/
+.codex-wangcai-*.json
+.pnpm-store/
 
 # .omo runtime/backup artifacts (planning docs tracked, runtime state not)
 .omo/run-continuation/

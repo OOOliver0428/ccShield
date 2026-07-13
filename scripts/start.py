@@ -8,6 +8,7 @@ Those wrappers run it inside the backend's uv-managed Python environment.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import os
 import shutil
@@ -21,13 +22,12 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
-APP_URL = "http://127.0.0.1:5173"
 BACKEND_PORT = 8000
-FRONTEND_PORT = 5173
+FRONTEND_PORT_START = 5173
+FRONTEND_PORT_ATTEMPTS = 100
 
 
 @dataclass(frozen=True)
@@ -153,10 +153,8 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
     except ProcessLookupError:
         return
     except subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             _ = os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def _port_is_open(port: int) -> bool:
@@ -167,9 +165,36 @@ def _port_is_open(port: int) -> bool:
         return False
 
 
+def _port_is_available(port: int) -> bool:
+    """Return whether an IPv4 loopback listener can bind to ``port``."""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+            candidate.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
+def _find_available_port(
+    start: int = FRONTEND_PORT_START,
+    attempts: int = FRONTEND_PORT_ATTEMPTS,
+) -> int:
+    """Select the first available frontend port starting at ``start``."""
+
+    for port in range(start, start + attempts):
+        if _port_is_available(port):
+            return port
+    raise OSError(
+        f"no available frontend port in range {start}-{start + attempts - 1}"
+    )
+
+
 def _open_browser_when_ready(
     processes: tuple[subprocess.Popen[bytes], subprocess.Popen[bytes]],
     stop_event: threading.Event,
+    frontend_port: int,
+    app_url: str,
 ) -> None:
     """Open the UI only after both development servers are accepting traffic."""
 
@@ -177,9 +202,9 @@ def _open_browser_when_ready(
     while time.monotonic() < deadline and not stop_event.wait(0.3):
         if any(process.poll() is not None for process in processes):
             return
-        if _port_is_open(BACKEND_PORT) and _port_is_open(FRONTEND_PORT):
-            print(f"\n[start] Ready: {APP_URL}", flush=True)
-            _ = webbrowser.open(APP_URL)
+        if _port_is_open(BACKEND_PORT) and _port_is_open(frontend_port):
+            print(f"\n[start] Ready: {app_url}", flush=True)
+            _ = webbrowser.open(app_url)
             return
 
 
@@ -236,6 +261,19 @@ def main(argv: list[str] | None = None) -> int:
             print("[start] Frontend dependency installation failed.", file=sys.stderr)
             return result.returncode
 
+    try:
+        frontend_port = _find_available_port()
+    except OSError as exc:
+        print(f"[start] Frontend port selection failed: {exc}", file=sys.stderr)
+        return 1
+
+    app_url = f"http://127.0.0.1:{frontend_port}"
+    if frontend_port != FRONTEND_PORT_START:
+        print(
+            f"[start] Frontend port {FRONTEND_PORT_START} is occupied; "
+            f"using {frontend_port}."
+        )
+
     backend_command = [
         sys.executable,
         "-m",
@@ -247,11 +285,17 @@ def main(argv: list[str] | None = None) -> int:
         "--port",
         str(BACKEND_PORT),
     ]
-    frontend_command = tool.run_command
+    frontend_command = [
+        *tool.run_command,
+        "--",
+        "--port",
+        str(frontend_port),
+        "--strictPort",
+    ]
 
     print(f"[start] Backend: {_display_command(backend_command)}")
     print(f"[start] Frontend: {_display_command(frontend_command)}")
-    print(f"[start] UI: {APP_URL}")
+    print(f"[start] UI: {app_url}")
     print("[start] Press Ctrl+C to stop both servers.\n")
 
     processes: list[subprocess.Popen[bytes]] = []
@@ -267,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_browser:
             threading.Thread(
                 target=_open_browser_when_ready,
-                args=((backend, frontend), stop_event),
+                args=((backend, frontend), stop_event, frontend_port, app_url),
                 daemon=True,
             ).start()
 

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">ccShield golden retriever knight logo</title>
+  <desc id="desc">A hand-drawn animation-style golden retriever bust wearing light medieval armor, with its face fully visible.</desc>
+  <defs>
+    <linearGradient id="badge" x1="0" y1="0" x2="0.82" y2="1">
+      <stop offset="0" stop-color="#EEF3FB"/>
+      <stop offset="1" stop-color="#CDD9EE"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#F2C66F"/>
+      <stop offset="0.55" stop-color="#D99A3D"/>
+      <stop offset="1" stop-color="#BC7228"/>
+    </linearGradient>
+    <linearGradient id="muzzle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F9D98F"/>
+      <stop offset="1" stop-color="#E8B85F"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0.12" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#E4EBF1"/>
+      <stop offset="0.42" stop-color="#AEBAC7"/>
+      <stop offset="1" stop-color="#768697"/>
+    </linearGradient>
+    <linearGradient id="steelDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9AA8B7"/>
+      <stop offset="1" stop-color="#59697B"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="14" flood-color="#273446" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- A compact shield silhouette keeps the mark readable at app-icon size. -->
+  <path
+    d="M512 62 C650 82 785 126 868 198 L839 585 C824 765 702 887 512 958 C322 887 200 765 185 585 L156 198 C239 126 374 82 512 62Z"
+    fill="url(#badge)"
+    stroke="#34445B"
+    stroke-width="24"
+    stroke-linejoin="round"
+    filter="url(#softShadow)"
+  />
+  <path
+    d="M512 94 C631 111 747 148 820 211 L795 566 C783 708 688 814 512 885 C336 814 241 708 229 566 L204 211 C277 148 393 111 512 94Z"
+    fill="none"
+    stroke="#7187BA"
+    stroke-width="10"
+    stroke-linejoin="round"
+    opacity="0.72"
+  />
+
+  <!-- Shoulder armor: broad enough to read as medieval plate, open around the neck. -->
+  <path
+    d="M199 861 C211 747 260 678 357 648 C390 687 410 742 407 824 L387 910 C314 906 250 888 199 861Z"
+    fill="url(#steel)"
+    stroke="#34404D"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M825 861 C813 747 764 678 667 648 C634 687 614 742 617 824 L637 910 C710 906 774 888 825 861Z"
+    fill="url(#steel)"
+    stroke="#34404D"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+  <path d="M222 792 C270 752 329 738 390 750" fill="none" stroke="#EAF0F5" stroke-width="17" stroke-linecap="round" opacity="0.72"/>
+  <path d="M802 792 C754 752 695 738 634 750" fill="none" stroke="#EAF0F5" stroke-width="17" stroke-linecap="round" opacity="0.72"/>
+  <path d="M237 842 C283 817 331 810 384 819" fill="none" stroke="#647487" stroke-width="12" stroke-linecap="round"/>
+  <path d="M787 842 C741 817 693 810 640 819" fill="none" stroke="#647487" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Breastplate and open collar. -->
+  <path
+    d="M344 728 C384 692 434 674 512 674 C590 674 640 692 680 728 L650 918 C602 938 559 948 512 958 C465 948 422 938 374 918Z"
+    fill="url(#steelDark)"
+    stroke="#34404D"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M361 719 C395 691 432 679 475 677 L447 767 L376 798Z"
+    fill="url(#steel)"
+    stroke="#34404D"
+    stroke-width="18"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M663 719 C629 691 592 679 549 677 L577 767 L648 798Z"
+    fill="url(#steel)"
+    stroke="#34404D"
+    stroke-width="18"
+    stroke-linejoin="round"
+  />
+  <path d="M512 762 L565 800 L548 890 L512 912 L476 890 L459 800Z" fill="#526AA8" stroke="#34404D" stroke-width="17" stroke-linejoin="round"/>
+  <path d="M512 792 L536 809 L528 857 L512 869 L496 857 L488 809Z" fill="#B9C8E8" opacity="0.9"/>
+  <circle cx="294" cy="786" r="13" fill="#DDE5EC" stroke="#34404D" stroke-width="8"/>
+  <circle cx="730" cy="786" r="13" fill="#DDE5EC" stroke="#34404D" stroke-width="8"/>
+
+  <!-- Floppy ears sit behind the face; no helmet so the expression stays open. -->
+  <path
+    d="M347 252 C285 241 228 292 219 374 C210 454 238 560 306 630 C334 659 371 635 382 596 C402 525 389 324 347 252Z"
+    fill="#A96325"
+    stroke="#4A3528"
+    stroke-width="24"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M677 252 C739 241 796 292 805 374 C814 454 786 560 718 630 C690 659 653 635 642 596 C622 525 635 324 677 252Z"
+    fill="#A96325"
+    stroke="#4A3528"
+    stroke-width="24"
+    stroke-linejoin="round"
+  />
+  <path d="M286 325 C250 392 273 497 327 563" fill="none" stroke="#D79545" stroke-width="22" stroke-linecap="round" opacity="0.72"/>
+  <path d="M738 325 C774 392 751 497 697 563" fill="none" stroke="#D79545" stroke-width="22" stroke-linecap="round" opacity="0.72"/>
+
+  <!-- Head and cheek fur. -->
+  <path
+    d="M512 161 C421 158 346 209 319 298 C294 378 311 483 342 569 C363 627 410 684 467 711 L512 746 L557 711 C614 684 661 627 682 569 C713 483 730 378 705 298 C678 209 603 158 512 161Z"
+    fill="url(#fur)"
+    stroke="#4A3528"
+    stroke-width="25"
+    stroke-linejoin="round"
+  />
+  <path d="M399 273 C432 220 481 202 512 205 C557 201 602 222 625 263" fill="none" stroke="#F8D88E" stroke-width="24" stroke-linecap="round" opacity="0.75"/>
+  <path d="M360 468 C347 526 372 592 422 638" fill="none" stroke="#B66F29" stroke-width="18" stroke-linecap="round" opacity="0.68"/>
+  <path d="M664 468 C677 526 652 592 602 638" fill="none" stroke="#B66F29" stroke-width="18" stroke-linecap="round" opacity="0.68"/>
+
+  <!-- Brows and eyes give a friendly but watchful guardian expression. -->
+  <path d="M392 370 C425 348 460 350 481 368" fill="none" stroke="#6E4728" stroke-width="18" stroke-linecap="round"/>
+  <path d="M632 370 C599 348 564 350 543 368" fill="none" stroke="#6E4728" stroke-width="18" stroke-linecap="round"/>
+  <path d="M399 410 C420 387 454 390 470 415 C451 441 419 442 399 410Z" fill="#2F2925"/>
+  <path d="M625 410 C604 387 570 390 554 415 C573 441 605 442 625 410Z" fill="#2F2925"/>
+  <circle cx="443" cy="406" r="7" fill="#FFF7E2"/>
+  <circle cx="581" cy="406" r="7" fill="#FFF7E2"/>
+
+  <!-- Muzzle, nose and a restrained smile stay completely unobstructed. -->
+  <path
+    d="M512 429 C451 421 393 459 394 526 C394 602 451 645 512 645 C573 645 630 602 630 526 C631 459 573 421 512 429Z"
+    fill="url(#muzzle)"
+    stroke="#6A472F"
+    stroke-width="18"
+    stroke-linejoin="round"
+  />
+  <path d="M466 474 C479 455 497 447 512 447 C527 447 545 455 558 474 C555 506 535 524 512 524 C489 524 469 506 466 474Z" fill="#302A29" stroke="#4A3528" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M512 522 L512 555" fill="none" stroke="#5C3B2A" stroke-width="13" stroke-linecap="round"/>
+  <path d="M512 557 C485 579 456 575 438 557" fill="none" stroke="#5C3B2A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M512 557 C539 579 568 575 586 557" fill="none" stroke="#5C3B2A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M478 591 C499 608 525 608 546 591 C543 627 526 644 512 645 C498 644 481 627 478 591Z" fill="#C96868" stroke="#6A3D3D" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M493 608 C505 614 519 614 531 608" fill="none" stroke="#F0A0A0" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- Loose chest fur emphasizes that the armor is not overly enclosing. -->
+  <path
+    d="M431 650 C449 674 462 696 471 733 L494 707 L512 760 L530 707 L553 733 C562 696 575 674 593 650 C567 665 540 671 512 671 C484 671 457 665 431 650Z"
+    fill="#F4C978"
+    stroke="#4A3528"
+    stroke-width="17"
+    stroke-linejoin="round"
+  />
+</svg>

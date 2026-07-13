@@ -20,6 +20,7 @@ from fastapi import APIRouter
 
 from app.api.auth_routes import router as auth_router
 from app.api.ban_routes import router as ban_router
+from app.api.quick_room_routes import router as quick_room_router
 from app.api.room_routes import router as room_router
 
 api_router: APIRouter = APIRouter(prefix="/api")
@@ -27,6 +28,7 @@ api_router: APIRouter = APIRouter(prefix="/api")
 
 api_router.include_router(auth_router)
 api_router.include_router(room_router)
+api_router.include_router(quick_room_router)
 api_router.include_router(ban_router)
 
 

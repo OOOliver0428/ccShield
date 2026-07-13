@@ -5,6 +5,20 @@ export type ClientOptions = {
 };
 
 /**
+ * AddQuickRoomRequest
+ *
+ * A real or short room id to verify and persist.
+ */
+export type AddQuickRoomRequest = {
+    /**
+     * Room Id
+     *
+     * Real or short room id
+     */
+    room_id: number;
+};
+
+/**
  * AuthStatusResponse
  *
  * Response body for ``GET /api/auth/status``.
@@ -238,6 +252,52 @@ export type QrStartResponse = {
      * Qrcode Key
      */
     qrcode_key: string;
+};
+
+/**
+ * QuickRoomListResponse
+ */
+export type QuickRoomListResponse = {
+    /**
+     * Rooms
+     */
+    rooms: Array<QuickRoomRecord>;
+};
+
+/**
+ * QuickRoomRecord
+ *
+ * A verified, canonical live-room shortcut stored on disk.
+ */
+export type QuickRoomRecord = {
+    /**
+     * Room Id
+     */
+    room_id: number;
+    /**
+     * Short Id
+     */
+    short_id?: number;
+    /**
+     * Uid
+     */
+    uid?: number | null;
+    /**
+     * Uname
+     */
+    uname?: string;
+    /**
+     * Title
+     */
+    title?: string;
+    /**
+     * Live Status
+     */
+    live_status?: number;
+    /**
+     * Added At
+     */
+    added_at: string;
 };
 
 /**
@@ -591,6 +651,47 @@ export type GetRoomRouteApiRoomsGetResponses = {
 };
 
 export type GetRoomRouteApiRoomsGetResponse = GetRoomRouteApiRoomsGetResponses[keyof GetRoomRouteApiRoomsGetResponses];
+
+export type ListQuickRoomsRouteApiQuickRoomsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/quick-rooms';
+};
+
+export type ListQuickRoomsRouteApiQuickRoomsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuickRoomListResponse;
+};
+
+export type ListQuickRoomsRouteApiQuickRoomsGetResponse = ListQuickRoomsRouteApiQuickRoomsGetResponses[keyof ListQuickRoomsRouteApiQuickRoomsGetResponses];
+
+export type AddQuickRoomRouteApiQuickRoomsPostData = {
+    body: AddQuickRoomRequest;
+    path?: never;
+    query?: never;
+    url: '/api/quick-rooms';
+};
+
+export type AddQuickRoomRouteApiQuickRoomsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AddQuickRoomRouteApiQuickRoomsPostError = AddQuickRoomRouteApiQuickRoomsPostErrors[keyof AddQuickRoomRouteApiQuickRoomsPostErrors];
+
+export type AddQuickRoomRouteApiQuickRoomsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuickRoomListResponse;
+};
+
+export type AddQuickRoomRouteApiQuickRoomsPostResponse = AddQuickRoomRouteApiQuickRoomsPostResponses[keyof AddQuickRoomRouteApiQuickRoomsPostResponses];
 
 export type DeleteBanRouteApiBanDeleteData = {
     body: UnbanRequest;

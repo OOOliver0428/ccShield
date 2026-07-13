@@ -81,7 +81,7 @@ async function onDisconnect(): Promise<void> {
       <div class="heading-copy">
         <span class="eyebrow">{{ room.status === "connected" ? "ACTIVE ROOM" : "ROOM CONNECTION" }}</span>
         <h2>{{ room.status === "connected" ? (room.resolvedTitle || "直播间已连接") : "连接直播间" }}</h2>
-        <p>{{ room.status === "connected" ? "弹幕与房管名单正在实时同步" : "输入真实房间号或短号，进入实时房管工作台" }}</p>
+        <p>{{ room.status === "connected" ? "弹幕与禁言名单正在实时同步" : "输入真实房间号或短号，进入实时房管工作台" }}</p>
       </div>
       <span
         :class="statusClass"

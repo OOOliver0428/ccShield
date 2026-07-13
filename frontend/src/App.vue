@@ -14,6 +14,7 @@ import DanmakuList from "./components/DanmakuList.vue";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
 import BanList from "./components/BanList.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
+import QuickRooms from "./components/QuickRooms.vue";
 
 /**
  * T14 + T19 — top-level shell.
@@ -179,7 +180,10 @@ function handleBridgeEvent(event: BridgeEvent): void {
     <section v-else-if="auth.status !== 'authenticated'" class="login-shell">
       <ThemeToggle class="login-theme-toggle" />
       <div class="login-brand">
-        <span class="brand-mark" aria-hidden="true">CS</span>
+        <picture class="brand-mark" aria-hidden="true">
+          <source srcset="/brand/ccshield-product-mark.webp" type="image/webp" />
+          <img src="/brand/ccshield-product-mark.png" alt="" />
+        </picture>
         <div>
           <span class="brand-name">ccShield</span>
           <span class="brand-caption">LIVE MODERATION CONSOLE</span>
@@ -191,7 +195,10 @@ function handleBridgeEvent(event: BridgeEvent): void {
     <section v-else class="authenticated-shell" data-testid="authenticated-shell">
       <header class="topbar">
         <div class="brand-lockup">
-          <span class="brand-mark" aria-hidden="true">CS</span>
+          <picture class="brand-mark" aria-hidden="true">
+            <source srcset="/brand/ccshield-product-mark.webp" type="image/webp" />
+            <img src="/brand/ccshield-product-mark.png" alt="" />
+          </picture>
           <div>
             <h1 class="brand">ccShield</h1>
             <span class="brand-caption">LIVE MODERATION CONSOLE</span>
@@ -216,6 +223,7 @@ function handleBridgeEvent(event: BridgeEvent): void {
 
       <div class="console-content">
         <RoomInput />
+        <QuickRooms />
         <ConnectionBanner :visible="wsVisible" />
         <section
           v-if="room.status === 'connected'"
@@ -285,19 +293,21 @@ function handleBridgeEvent(event: BridgeEvent): void {
   gap: 1px;
 }
 .brand-mark {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  place-items: center;
+  display: block;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  overflow: hidden;
   border: 1px solid var(--cc-brand-border);
-  border-radius: 11px;
-  color: #fff;
-  background: linear-gradient(145deg, #8795ff, #5868d9);
+  border-radius: 12px;
+  background: #f7f1e5;
   box-shadow: var(--cc-brand-shadow);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: -0.4px;
+}
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .brand-name,
 .brand {

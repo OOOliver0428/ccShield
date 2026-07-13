@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthBootstrapApiAuthBootstrapGetData, AuthBootstrapApiAuthBootstrapGetResponses, AuthMeApiAuthMeGetData, AuthMeApiAuthMeGetResponses, AuthStatusApiAuthStatusGetData, AuthStatusApiAuthStatusGetResponses, DeleteBanRouteApiBanDeleteData, DeleteBanRouteApiBanDeleteErrors, DeleteBanRouteApiBanDeleteResponses, GetBanListRouteApiBanListRoomIdGetData, GetBanListRouteApiBanListRoomIdGetErrors, GetBanListRouteApiBanListRoomIdGetResponses, GetRoomRouteApiRoomsGetData, GetRoomRouteApiRoomsGetResponses, HealthHealthGetData, HealthHealthGetResponses, ManualCookiesApiAuthManualPostData, ManualCookiesApiAuthManualPostErrors, ManualCookiesApiAuthManualPostResponses, PostBanRouteApiBanPostData, PostBanRouteApiBanPostErrors, PostBanRouteApiBanPostResponses, QrPollRouteApiAuthQrPollGetData, QrPollRouteApiAuthQrPollGetErrors, QrPollRouteApiAuthQrPollGetResponses, QrStartApiAuthQrStartPostData, QrStartApiAuthQrStartPostResponses, ResolveRoomRouteApiRoomsResolveGetData, ResolveRoomRouteApiRoomsResolveGetErrors, ResolveRoomRouteApiRoomsResolveGetResponses, StartRoomRouteApiRoomsStartPostData, StartRoomRouteApiRoomsStartPostErrors, StartRoomRouteApiRoomsStartPostResponses, StopRoomRouteApiRoomsStopPostData, StopRoomRouteApiRoomsStopPostResponses } from './types.gen';
+import type { AddQuickRoomRouteApiQuickRoomsPostData, AddQuickRoomRouteApiQuickRoomsPostErrors, AddQuickRoomRouteApiQuickRoomsPostResponses, AuthBootstrapApiAuthBootstrapGetData, AuthBootstrapApiAuthBootstrapGetResponses, AuthMeApiAuthMeGetData, AuthMeApiAuthMeGetResponses, AuthStatusApiAuthStatusGetData, AuthStatusApiAuthStatusGetResponses, DeleteBanRouteApiBanDeleteData, DeleteBanRouteApiBanDeleteErrors, DeleteBanRouteApiBanDeleteResponses, GetBanListRouteApiBanListRoomIdGetData, GetBanListRouteApiBanListRoomIdGetErrors, GetBanListRouteApiBanListRoomIdGetResponses, GetRoomRouteApiRoomsGetData, GetRoomRouteApiRoomsGetResponses, HealthHealthGetData, HealthHealthGetResponses, ListQuickRoomsRouteApiQuickRoomsGetData, ListQuickRoomsRouteApiQuickRoomsGetResponses, ManualCookiesApiAuthManualPostData, ManualCookiesApiAuthManualPostErrors, ManualCookiesApiAuthManualPostResponses, PostBanRouteApiBanPostData, PostBanRouteApiBanPostErrors, PostBanRouteApiBanPostResponses, QrPollRouteApiAuthQrPollGetData, QrPollRouteApiAuthQrPollGetErrors, QrPollRouteApiAuthQrPollGetResponses, QrStartApiAuthQrStartPostData, QrStartApiAuthQrStartPostResponses, ResolveRoomRouteApiRoomsResolveGetData, ResolveRoomRouteApiRoomsResolveGetErrors, ResolveRoomRouteApiRoomsResolveGetResponses, StartRoomRouteApiRoomsStartPostData, StartRoomRouteApiRoomsStartPostErrors, StartRoomRouteApiRoomsStartPostResponses, StopRoomRouteApiRoomsStopPostData, StopRoomRouteApiRoomsStopPostResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -166,6 +166,23 @@ export const stopRoomRouteApiRoomsStopPost = <ThrowOnError extends boolean = fal
  * Return the active room_id + status (``None``/``disconnected`` when idle).
  */
 export const getRoomRouteApiRoomsGet = <ThrowOnError extends boolean = false>(options?: Options<GetRoomRouteApiRoomsGetData, ThrowOnError>): RequestResult<GetRoomRouteApiRoomsGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetRoomRouteApiRoomsGetResponses, unknown, ThrowOnError>({ url: '/api/rooms', ...options });
+
+/**
+ * List locally configured quick room shortcuts
+ */
+export const listQuickRoomsRouteApiQuickRoomsGet = <ThrowOnError extends boolean = false>(options?: Options<ListQuickRoomsRouteApiQuickRoomsGetData, ThrowOnError>): RequestResult<ListQuickRoomsRouteApiQuickRoomsGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListQuickRoomsRouteApiQuickRoomsGetResponses, unknown, ThrowOnError>({ url: '/api/quick-rooms', ...options });
+
+/**
+ * Verify and append a quick room shortcut
+ */
+export const addQuickRoomRouteApiQuickRoomsPost = <ThrowOnError extends boolean = false>(options: Options<AddQuickRoomRouteApiQuickRoomsPostData, ThrowOnError>): RequestResult<AddQuickRoomRouteApiQuickRoomsPostResponses, AddQuickRoomRouteApiQuickRoomsPostErrors, ThrowOnError> => (options.client ?? client).post<AddQuickRoomRouteApiQuickRoomsPostResponses, AddQuickRoomRouteApiQuickRoomsPostErrors, ThrowOnError>({
+    url: '/api/quick-rooms',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Unban a user by block id

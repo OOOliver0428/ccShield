@@ -667,7 +667,7 @@ wheels = [
 
 [[package]]
 name = "reccshield-backend"
-version = "0.1.0"
+version = "2.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },

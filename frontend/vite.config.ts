@@ -23,7 +23,10 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 5173,
-    strictPort: true,
+    // Direct `vite` / `npm run dev` usage automatically tries 5174, 5175,
+    // ... when the preferred port is already occupied. The cross-platform
+    // launcher selects the same way and passes its result explicitly.
+    strictPort: false,
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",
