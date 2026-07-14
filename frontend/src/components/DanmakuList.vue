@@ -65,7 +65,10 @@ function onClear(): void {
 }
 
 function formatTs(ts: number): string {
-  const d = new Date(ts * 1000);
+  // The bridge contract is seconds, but tolerate a raw millisecond value so
+  // mixed frontend/backend hot reloads cannot recreate the jumping clock bug.
+  const epochMs = ts >= 100_000_000_000 ? ts : ts * 1000;
+  const d = new Date(epochMs);
   const pad = (n: number): string => n.toString().padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }

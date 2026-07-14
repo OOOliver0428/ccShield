@@ -62,6 +62,19 @@ describe("DanmakuList.vue", () => {
     expect(rows[0]!.text()).toContain("hello world");
   });
 
+  it("renders millisecond danmaku timestamps without multiplying them again", () => {
+    const timestampMs = 1_700_000_000_123;
+    const expected = new Date(timestampMs);
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const expectedText = `${pad(expected.getHours())}:${pad(expected.getMinutes())}:${pad(expected.getSeconds())}`;
+    const store = useDanmakuStore();
+    store.addDanmaku(makeDanmaku(1, "timestamp", { ts: timestampMs }));
+
+    const wrapper = mount(DanmakuList);
+
+    expect(wrapper.get(".ts").text()).toBe(expectedText);
+  });
+
   it("renders GuardBadge with 舰长 for guard_level=3", () => {
     const store = useDanmakuStore();
     store.addDanmaku(makeDanmaku(1, "hi", { guard_level: 3 }));

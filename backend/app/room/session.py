@@ -61,6 +61,9 @@ BridgeCallback = Callable[[BridgeEvent], Awaitable[None]]
 # Default dedup buffer size — matches ccShield's RoomManager.
 DEFAULT_DEDUP_SIZE: Final[int] = 5000
 _SC_BOOTSTRAP_TIMEOUT: Final[float] = 5.0
+# B站 DANMU_MSG ``info[0][4]`` is normally a 13-digit Unix timestamp in
+# milliseconds.  Keep accepting 10-digit seconds for older fixtures/variants.
+_MILLISECONDS_EPOCH_THRESHOLD: Final[int] = 100_000_000_000
 _HEX_COLOR_RE: Final[re.Pattern[str]] = re.compile(
     r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$"
 )
@@ -402,13 +405,16 @@ class RoomSession:
         uid = uid_obj if isinstance(uid_obj, int) else 0
         uname = uname_obj if isinstance(uname_obj, str) else ""
 
-        # ts — info[0][4] (server timestamp)
+        # ts — info[0][4] (B站 normally sends milliseconds; our bridge
+        # contract is seconds, shared with SC start_time/end_time).
         ts = 0
         head_obj = info[0]
         if isinstance(head_obj, list) and len(head_obj) > 4:
             ts_obj = head_obj[4]
             if isinstance(ts_obj, int):
                 ts = ts_obj
+                if ts >= _MILLISECONDS_EPOCH_THRESHOLD:
+                    ts //= 1000
 
         # guard_level — info[7] if present
         guard_level = 0

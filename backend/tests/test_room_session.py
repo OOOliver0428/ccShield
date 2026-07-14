@@ -142,6 +142,42 @@ def test_normalize_danmu_msg_basic() -> None:
     assert event.medal.level == 5
 
 
+def test_normalize_danmu_msg_converts_milliseconds_to_seconds() -> None:
+    """Modern 13-digit B站 timestamps are normalized to bridge seconds."""
+    sess = RoomSession(bili_client=_stub_bili())
+    raw = {
+        "cmd": "DANMU_MSG",
+        "info": [
+            [0, 0, 0, 0, 1_700_000_000_123, 0],
+            "millisecond timestamp",
+            [123, "alice", 0, 0, 0],
+        ],
+    }
+
+    event = sess._normalize(raw)
+
+    assert isinstance(event, DanmakuEvent)
+    assert event.ts == 1_700_000_000
+
+
+def test_normalize_danmu_msg_keeps_legacy_seconds() -> None:
+    """A 10-digit timestamp must not be divided a second time."""
+    sess = RoomSession(bili_client=_stub_bili())
+    raw = {
+        "cmd": "DANMU_MSG",
+        "info": [
+            [0, 0, 0, 0, 1_700_000_000, 0],
+            "second timestamp",
+            [123, "alice", 0, 0, 0],
+        ],
+    }
+
+    event = sess._normalize(raw)
+
+    assert isinstance(event, DanmakuEvent)
+    assert event.ts == 1_700_000_000
+
+
 # ---------------------------------------------------------------------------
 # 2. _normalize DANMU_MSG with cmd suffix "DANMU_MSG:4:0:2:2:2:0"
 # ---------------------------------------------------------------------------

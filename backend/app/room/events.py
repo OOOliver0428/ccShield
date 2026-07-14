@@ -45,7 +45,8 @@ class DanmakuEvent(BaseModel):
     * ``text``   — ``info[1]`` (raw message text)
     * ``uid``    — ``info[2][0]`` (sender uid)
     * ``uname``  — ``info[2][1]`` (sender username)
-    * ``ts``     — ``info[0][4]`` (server-reported timestamp, seconds)
+    * ``ts``     — ``info[0][4]`` (server-reported milliseconds normalized
+      to Unix seconds; legacy second values remain supported)
     * ``guard_level`` — ``info[7]`` if present, else 0
       (0=none, 1=总督, 2=提督, 3=舰长)
     * ``medal``  — ``info[3]`` if present and non-empty (parsed as
