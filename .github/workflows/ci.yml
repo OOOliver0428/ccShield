@@ -52,7 +52,11 @@ jobs:
       # until the marker is registered. Tracking: leave as-is to gate CI on
       # the marker being properly declared.
       - name: Pytest (exclude live tests)
-        run: uv run pytest -m "not live" -v
+        run: uv run pytest -m "not live" -v --junitxml=pytest-results.xml
+
+      - name: Report pytest failure details
+        if: failure()
+        run: uv run python ../scripts/report_pytest_failures.py pytest-results.xml
 
       # Project-wide coverage floor (70%). Per-module 80% is enforced locally
       # per-task; CI uses a single project gate to keep the signal simple.
