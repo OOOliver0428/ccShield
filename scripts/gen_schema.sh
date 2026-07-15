@@ -112,13 +112,20 @@ if ! python3 - "$TMP_FILE" <<'PY'
 import json
 import sys
 path = sys.argv[1]
-with open(path) as f:
+with open(path, encoding="utf-8") as f:
     d = json.load(f)
 ver = d.get("openapi", "")
 if not isinstance(ver, str) or not ver.startswith("3."):
     raise SystemExit(f"not openapi 3.x (got openapi={ver!r})")
 if "paths" not in d or not isinstance(d["paths"], dict):
     raise SystemExit("missing 'paths' object")
+
+# FastAPI serves compact JSON, while the committed schema is intentionally
+# human-readable. Normalise the response so the stale check compares schema
+# content instead of failing on whitespace after every regeneration.
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(d, f, ensure_ascii=False, indent=2)
+    f.write("\n")
 PY
 then
   echo "gen_schema: response at $HEALTH_URL is not a valid OpenAPI 3.x document" >&2

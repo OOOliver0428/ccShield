@@ -36,9 +36,12 @@ describe("QrLogin.vue", () => {
     await flushPromises();
     await flushPromises();
     await flushPromises();
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-testid="qr-image"]').exists()).toBe(true),
+      { timeout: 2000 },
+    );
 
-    const img = wrapper.find("img");
-    expect(img.exists()).toBe(true);
+    const img = wrapper.get('[data-testid="qr-image"]');
     const src = img.attributes("src");
     expect(src).toMatch(/^data:image\/png;base64,/);
     // Crucially, the raw scan-link string MUST NOT be passed through as src.
@@ -94,9 +97,13 @@ describe("QrLogin.vue", () => {
     await flushPromises();
     await flushPromises();
     await flushPromises();
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-testid="qr-image"]').exists()).toBe(true),
+      { timeout: 2000 },
+    );
 
     expect(startCalls).toBe(2);
-    const img = wrapper.find("img");
+    const img = wrapper.get('[data-testid="qr-image"]');
     const src = img.attributes("src");
     expect(src).toMatch(/^data:image\/png;base64,/);
   });
@@ -153,16 +160,15 @@ describe("QrLogin.vue", () => {
     await flushPromises();
     await flushPromises();
     await flushPromises();
-    // The qrcode lib's PNG pipeline goes through libuv's zlib worker
-    // thread, which notifies the main thread via setImmediate in a
-    // subsequent drain cycle. `flushPromises()` (also setImmediate) is
-    // not guaranteed to wait for that second-cycle callback, so we add a
-    // small real-timer flush. Without this the H2 assertion is flaky in
-    // ~80% of full-suite runs (~1/5 pass rate observed locally).
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // QR generation uses a worker-backed PNG pipeline. Wait for the rendered
+    // image rather than assuming a fixed number of promise drains is enough
+    // on every CI runner.
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-testid="qr-image"]').exists()).toBe(true),
+      { timeout: 2000 },
+    );
 
-    const img = wrapper.find("img");
-    expect(img.exists()).toBe(true);
+    const img = wrapper.get('[data-testid="qr-image"]');
     const src = img.attributes("src");
     expect(src).toBeTruthy();
     // The src must be a rendered QR data URL (data:image/...) — NOT the raw
