@@ -203,7 +203,7 @@ def test_qr_poll_success_captures_cookies_from_set_cookie_when_url_missing() -> 
             headers=[
                 ("Set-Cookie", "SESSDATA=fake_sess_from_header; Path=/; HttpOnly"),
                 ("Set-Cookie", "bili_jct=fake_jct_from_header; Path=/; HttpOnly"),
-                ("Set-Cookie", "DedeUserID=99999; Path=/; HttpOnly"),
+                ("Set-Cookie", "DedeUserID=99999; Path=/; HttpOnly"),  # secretscan-allow: synthetic test credential
             ],
             json={
                 "code": 0,
@@ -227,7 +227,7 @@ def test_qr_poll_success_merges_set_cookie_and_data_url() -> None:
 
     url_partial = (
         "https://passport.biligame.com/x/passport-login/web/crossDomain"
-        "?DedeUserID=12345&SESSDATA=fake_sess_from_url"
+        "?DedeUserID=12345&SESSDATA=fake_sess_from_url"  # secretscan-allow: synthetic test credential
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
