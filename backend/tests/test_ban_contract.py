@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import TypeVar, cast
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -278,8 +279,7 @@ def _capture_cb(received: list[BanListMessage]) -> BanListCallback:
 
 def test_contract_ban_user_code_zero_returns_true() -> None:
     """``ban_user`` with code=0 MUST return ``True`` and POST to
-    ``/xlive/web-ucenter/v1/banned/AddSilentUser`` with the expected
-    form fields (csrf, room_id, tuid, hour, msg).
+    ``AddSilentUser`` with the expected type-one timed-ban form fields.
     """
     captured: list[httpx.Request] = []
 
@@ -289,7 +289,7 @@ def test_contract_ban_user_code_zero_returns_true() -> None:
 
     client = _make_client(handler)
     result = _run(
-        client.ban_user(room_id=22210347, uid=12345, hour=1, msg="stop")
+        client.ban_user(room_id=22210347, uid=12345, hour=2, msg="stop")
     )
 
     assert result is True
@@ -297,13 +297,43 @@ def test_contract_ban_user_code_zero_returns_true() -> None:
     path = captured[0].url.path
     assert path.endswith("/xlive/web-ucenter/v1/banned/AddSilentUser")
 
-    body = captured[0].content.decode()
-    # Form fields the ccShield client contract relies on.
-    assert "room_id=22210347" in body
-    assert "tuid=12345" in body
-    assert "hour=1" in body
-    assert "msg=stop" in body
-    assert "csrf=mock-csrf-token" in body
+    body = parse_qs(captured[0].content.decode(), keep_blank_values=True)
+    assert body == {
+        "room_id": ["22210347"],
+        "tuid": ["12345"],
+        "mobile_app": ["web"],
+        "type": ["1"],
+        "hour": ["2"],
+        "csrf_token": ["mock-csrf-token"],
+        "csrf": ["mock-csrf-token"],
+    }
+
+
+def test_contract_session_ban_uses_type_two_add_silent_user() -> None:
+    """The official web client represents 本场禁言 as type=2/hour=0."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=BAN_OK)
+
+    client = _make_client(handler)
+    result = _run(client.ban_user(room_id=1601605, uid=12345, hour=0))
+
+    assert result is True
+    assert captured[0].url.path.endswith(
+        "/xlive/web-ucenter/v1/banned/AddSilentUser"
+    )
+    body = parse_qs(captured[0].content.decode(), keep_blank_values=True)
+    assert body == {
+        "room_id": ["1601605"],
+        "tuid": ["12345"],
+        "mobile_app": ["web"],
+        "type": ["2"],
+        "hour": ["0"],
+        "csrf_token": ["mock-csrf-token"],
+        "csrf": ["mock-csrf-token"],
+    }
 
 
 def test_contract_ban_user_minus_101_raises_auth_expired() -> None:
@@ -311,7 +341,7 @@ def test_contract_ban_user_minus_101_raises_auth_expired() -> None:
     handler = _static_handler(BAN_AUTH_EXPIRED)
     client = _make_client(handler)
     with pytest.raises(AuthExpiredError) as excinfo:
-        _run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        _run(client.ban_user(room_id=22210347, uid=1, hour=2))
     # Contract: code MUST be -101 (the typed exception carries it).
     assert excinfo.value.code == -101
     assert excinfo.value.message == "账号未登录"
@@ -322,7 +352,7 @@ def test_contract_ban_user_minus_403_raises_permission_denied() -> None:
     handler = _static_handler(BAN_PERMISSION_DENIED)
     client = _make_client(handler)
     with pytest.raises(PermissionDeniedError) as excinfo:
-        _run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        _run(client.ban_user(room_id=22210347, uid=1, hour=2))
     assert excinfo.value.code == -403
     assert excinfo.value.message == "无权限"
 
@@ -332,7 +362,7 @@ def test_contract_ban_user_minus_509_raises_rate_limited() -> None:
     handler = _static_handler(BAN_RATE_LIMITED)
     client = _make_client(handler)
     with pytest.raises(RateLimitedError) as excinfo:
-        _run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        _run(client.ban_user(room_id=22210347, uid=1, hour=2))
     assert excinfo.value.code == -509
 
 
@@ -346,7 +376,7 @@ def test_contract_ban_user_unknown_code_raises_base_bili_api_error() -> None:
     handler = _static_handler(BAN_UNKNOWN_ERROR)
     client = _make_client(handler)
     with pytest.raises(BiliApiError) as excinfo:
-        _run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        _run(client.ban_user(room_id=22210347, uid=1, hour=2))
     assert excinfo.value.code == -500
     assert type(excinfo.value) is BiliApiError
 
@@ -711,4 +741,4 @@ def test_contract_error_ban_minus_403_never_returns_true() -> None:
     handler = _static_handler(BAN_PERMISSION_DENIED)
     client = _make_client(handler)
     with pytest.raises(PermissionDeniedError):
-        _run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        _run(client.ban_user(room_id=22210347, uid=1, hour=2))

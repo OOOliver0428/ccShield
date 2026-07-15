@@ -36,14 +36,24 @@ const filteredEntries = computed<BanEntry[]>(() => {
   return entries.value.filter((entry) =>
     entry.uname.toLocaleLowerCase().includes(needle)
     || String(entry.uid).includes(needle)
+    || entry.operator_name.toLocaleLowerCase().includes(needle)
+    || String(entry.operator_uid ?? "").includes(needle)
     || entry.reason.toLocaleLowerCase().includes(needle),
   );
 });
 
+function formatOperator(entry: BanEntry): string {
+  if (entry.operator_name && entry.operator_uid !== null) {
+    return `${entry.operator_name} (uid:${entry.operator_uid})`;
+  }
+  if (entry.operator_name) return entry.operator_name;
+  if (entry.operator_uid !== null) return `uid:${entry.operator_uid}`;
+  return entry.pending ? "同步中" : "—";
+}
+
 function formatDuration(hour: number | null): string {
   if (hour === null) return "—";
-  // Existing B站 lists may already contain permanent records even though
-  // this phase deliberately does not expose a permanent-ban action.
+  // Permanent bans use B站's hour=-1 convention.
   if (hour === -1) return "永久";
   if (hour === 0) return "本场";
   if (hour === 168) return "7天";
@@ -198,6 +208,9 @@ async function onUnban(entry: BanEntry): Promise<void> {
           </div>
           <div class="ban-row-meta">
             <span class="ctime">{{ formatTime(entry.created_at) }}</span>
+            <span class="operator" data-testid="ban-operator">
+              操作人：{{ formatOperator(entry) }}
+            </span>
             <span v-if="entry.pending" class="pending" data-testid="pending-label">
               正在同步
             </span>
@@ -396,11 +409,20 @@ async function onUnban(entry: BanEntry): Promise<void> {
   min-height: 18px;
   padding: 5px 0 0 36px;
   gap: 7px;
+  flex-wrap: wrap;
 }
 .ban-row .ctime {
   color: var(--cc-text-muted);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
+}
+.ban-row .operator {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cc-text-secondary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .loading {
   padding: 44px 0;

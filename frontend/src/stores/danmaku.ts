@@ -6,9 +6,8 @@
  * or anything transport-shaped; the App.vue dispatcher pushes events
  * into it as they arrive.
  *
- * Cap rationale (500): a chatty room can easily emit >1k danmaku per
- * minute; rendering 500 fixed-height rows comfortably fits a tall
- * viewport and keeps the React-ish virtual DOM diff cheap. Older
+ * Cap rationale (1000): moderators may need a deeper review window in
+ * high-traffic rooms. Older
  * messages are dropped (slice oldest) so memory + DOM cost stay
  * bounded.
  *
@@ -24,7 +23,7 @@ import type { BridgeMessageEvent, BridgeScEvent } from "../api/ws";
 export type DanmakuItem = BridgeMessageEvent;
 export type ScItem = BridgeScEvent;
 
-const DANMAKU_CAP = 500;
+const DANMAKU_CAP = 1000;
 const SC_CAP = 20;
 
 export const useDanmakuStore = defineStore("danmaku", () => {

@@ -68,6 +68,8 @@ class BanEntry(TypedDict):
     block_id: int | None
     uid: int
     uname: str
+    operator_uid: int | None
+    operator_name: str
     hour: int | None
     reason: str
     created_at: BanTimestamp
@@ -163,6 +165,22 @@ def normalize_ban_entry(
         uname = _as_text(raw.get("tname")) or _as_text(raw.get("uname"))
     else:
         uname = _as_text(raw.get("uname")) or _as_text(raw.get("tname"))
+
+    # Preserve explicit normalized fields when a cached entry passes through
+    # this function again. For Bilibili's raw GetSilentUserList payload,
+    # uid/name belong to the moderator only when tuid identifies the target.
+    # Without that guard our own pending uid/uname record would incorrectly
+    # claim that the muted user performed the moderation action.
+    operator_uid = _as_int(raw.get("operator_uid"))
+    operator_name = _as_text(raw.get("operator_name"))
+    if target_uid is not None and target_uid > 0:
+        if operator_uid is None:
+            operator_uid = _as_int(raw.get("uid"))
+        if not operator_name:
+            operator_name = _as_text(raw.get("name"))
+    if operator_uid is not None and operator_uid <= 0:
+        operator_uid = None
+
     hour = _as_int(raw.get("hour"))
     reason = (
         _as_text(raw.get("reason"))
@@ -194,6 +212,8 @@ def normalize_ban_entry(
         block_id=block_id,
         uid=uid,
         uname=uname,
+        operator_uid=operator_uid,
+        operator_name=operator_name,
         hour=hour,
         reason=reason,
         created_at=created_at,

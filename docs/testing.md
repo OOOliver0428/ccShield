@@ -91,10 +91,12 @@ Scope of the live suite:
 
 - **Read-only B站 endpoints only.** Live tests call `get_user_info`,
   `get_danmu_info`, `get_ban_list`, and similar idempotent reads.
-- **No live ban.** `BilibiliClient.add_block_user` is never invoked
+- **No live ban.** `BilibiliClient.ban_user` is never invoked
   from this layer. The ban code path is covered by layer-2 contract
   tests against synthetic responses, which is enough to prove the
-  request shape, the CSRF token wiring, and the response parsing.
+  `AddSilentUser` request shape (`type=2/hour=0` for current-stream bans,
+  `type=1` for timed/permanent bans), the CSRF token wiring, and the response
+  parsing.
 - **`SESSDATA` and `bili_jct` are required to run the suite.** A test
   that needs cookies skips with a clear "configure .env first" message
   rather than failing noisily.

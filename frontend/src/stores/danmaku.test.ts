@@ -54,22 +54,22 @@ describe("danmaku store", () => {
     expect(store.list[0]).toEqual(ev);
   });
 
-  it("caps the list at 500 — feeding 501 keeps only the newest 500", () => {
+  it("caps the list at 1000 — feeding 1001 keeps only the newest 1000", () => {
     const store = useDanmakuStore();
-    expect(DANMAKU_CAP).toBe(500);
+    expect(DANMAKU_CAP).toBe(1000);
 
-    for (let i = 0; i < 501; i++) {
+    for (let i = 0; i < 1001; i++) {
       store.addDanmaku(makeDanmaku(i, `msg-${i}`));
     }
 
-    expect(store.list).toHaveLength(500);
+    expect(store.list).toHaveLength(1000);
     // Oldest entry (uid=0) must have been dropped.
     expect(store.list[0]?.uid).toBe(1);
     // Newest entry preserved.
-    expect(store.list[499]?.uid).toBe(500);
+    expect(store.list[999]?.uid).toBe(1000);
   });
 
-  it("caps at 500 with guard_level/medal fields preserved through trim", () => {
+  it("caps at 1000 with guard_level/medal fields preserved through trim", () => {
     const store = useDanmakuStore();
     const rich: BridgeMessageEvent = {
       type: "danmaku",
@@ -80,13 +80,13 @@ describe("danmaku store", () => {
       guard_level: 3,
       medal: { name: "粉丝牌", level: 25 },
     };
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 1000; i++) {
       store.addDanmaku(makeDanmaku(i, `msg-${i}`));
     }
     store.addDanmaku(rich);
 
-    expect(store.list).toHaveLength(500);
-    expect(store.list[499]).toEqual(rich);
+    expect(store.list).toHaveLength(1000);
+    expect(store.list[999]).toEqual(rich);
   });
 
   it("keeps only the newest active SC cards", () => {

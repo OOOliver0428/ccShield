@@ -7,6 +7,8 @@ function makeBan(uid: number, extras: Partial<BanEntry> = {}): BanEntry {
     block_id: uid,
     uid,
     uname: `user${uid}`,
+    operator_uid: null,
+    operator_name: "",
     hour: 1,
     reason: "",
     created_at: null,
@@ -56,6 +58,21 @@ describe("ban store", () => {
       ]);
       expect(store.banList).toHaveLength(1);
       expect(store.banList[0]?.uname).toBe("new");
+    });
+
+    it("normalizes and retains moderation operator details", () => {
+      const store = useBanStore();
+      store.applySnapshot([
+        {
+          uid: 1,
+          operator_uid: 55,
+          operator_name: "moderator",
+        },
+      ]);
+      store.addBan({ uid: 1, reason: "spam" });
+
+      expect(store.banList[0]?.operator_uid).toBe(55);
+      expect(store.banList[0]?.operator_name).toBe("moderator");
     });
 
     it("accepts an empty snapshot (clears state)", () => {

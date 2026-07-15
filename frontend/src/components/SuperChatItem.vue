@@ -59,7 +59,12 @@ const tsText = computed(() => {
 </script>
 
 <template>
-  <article class="sc-card" :style="cardStyle" data-testid="sc-row">
+  <article
+    class="sc-card"
+    :style="cardStyle"
+    :title="`${sc.uname}：${sc.text}`"
+    data-testid="sc-row"
+  >
     <header class="sc-meta">
       <span class="sc-price" data-testid="sc-price">{{ priceText }}</span>
       <GuardBadge :level="sc.guard_level" />
@@ -76,6 +81,9 @@ const tsText = computed(() => {
 
 <style scoped>
 .sc-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   overflow: hidden;
   background: var(--sc-body-bg);
   border: 1px solid color-mix(in srgb, var(--sc-accent) 74%, white 8%);
@@ -86,6 +94,8 @@ const tsText = computed(() => {
 }
 .sc-meta {
   display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
@@ -101,26 +111,38 @@ const tsText = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 .sc-card .uname {
+  min-width: 0;
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sc-card .remaining {
   margin-left: auto;
+  flex: 0 0 auto;
   white-space: nowrap;
   font-size: 9px;
   opacity: 0.9;
 }
 .sc-message {
   display: flex;
-  align-items: baseline;
+  min-height: 0;
+  flex: 1;
+  align-items: flex-start;
   gap: 8px;
   padding: 9px 10px;
   color: var(--sc-message-color);
 }
 .sc-card .text {
+  display: -webkit-box;
+  overflow: hidden;
   flex: 1;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   word-break: break-word;
 }
 .sc-card .ts {
+  align-self: flex-end;
   white-space: nowrap;
   font-size: 9px;
   font-variant-numeric: tabular-nums;

@@ -127,7 +127,7 @@ class BanRequest(BaseModel):
 
     room_id: int = Field(gt=0)
     uid: int = Field(gt=0)
-    hour: Literal[0, 1, 24, 168, 720]
+    hour: Literal[-1, 0, 2, 4, 24, 168]
     reason: str = Field(default="", max_length=200)
     uname: str = Field(default="", max_length=100)
 
@@ -150,6 +150,8 @@ class BanEntryResponse(BaseModel):
     block_id: int | None
     uid: int
     uname: str
+    operator_uid: int | None
+    operator_name: str
     hour: int | None
     reason: str
     created_at: BanTimestamp

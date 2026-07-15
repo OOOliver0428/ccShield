@@ -3,7 +3,7 @@
   "info": {
     "title": "reccshield backend",
     "description": "Bilibili live-room moderator tool — backend API.",
-    "version": "2.0.2"
+    "version": "2.0.3"
   },
   "paths": {
     "/api/auth/bootstrap": {
@@ -585,6 +585,21 @@
             "type": "string",
             "title": "Uname"
           },
+          "operator_uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Uid"
+          },
+          "operator_name": {
+            "type": "string",
+            "title": "Operator Name"
+          },
           "hour": {
             "anyOf": [
               {
@@ -639,6 +654,8 @@
           "block_id",
           "uid",
           "uname",
+          "operator_uid",
+          "operator_name",
           "hour",
           "reason",
           "created_at",
@@ -685,11 +702,12 @@
           "hour": {
             "type": "integer",
             "enum": [
+              -1,
               0,
-              1,
+              2,
+              4,
               24,
-              168,
-              720
+              168
             ],
             "title": "Hour"
           },

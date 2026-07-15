@@ -49,6 +49,14 @@ export type BanEntryResponse = {
      */
     uname: string;
     /**
+     * Operator Uid
+     */
+    operator_uid: number | null;
+    /**
+     * Operator Name
+     */
+    operator_name: string;
+    /**
      * Hour
      */
     hour: number | null;
@@ -111,7 +119,7 @@ export type BanRequest = {
     /**
      * Hour
      */
-    hour: 0 | 1 | 24 | 168 | 720;
+    hour: -1 | 0 | 2 | 4 | 24 | 168;
     /**
      * Reason
      */

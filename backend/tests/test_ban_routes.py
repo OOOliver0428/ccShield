@@ -249,21 +249,23 @@ def test_post_ban_returns_200_and_calls_on_ban_when_manager_running(
         json={
             "room_id": 22210347,
             "uid": 42,
-            "hour": 1,
+            "hour": 2,
             "reason": "spam",
         },
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 200
     assert response.json() == {"ok": True}
-    fake_bili_client.ban_user.assert_awaited_once_with(22210347, 42, 1, "spam")
+    fake_bili_client.ban_user.assert_awaited_once_with(22210347, 42, 2, "spam")
     assert len(fake_banlist_manager.on_ban_calls) == 1
     uid, entry = fake_banlist_manager.on_ban_calls[0]
     assert uid == 42
     assert entry["uid"] == 42
-    assert entry["hour"] == 1
+    assert entry["hour"] == 2
     assert entry["pending"] is True
     assert entry["block_id"] is None
+    assert entry["operator_uid"] is None
+    assert entry["operator_name"] == ""
     assert fake_banlist_manager.refresh_calls == 1
 
 
@@ -283,14 +285,14 @@ def test_post_ban_returns_400_when_ban_user_returns_false(
 
     response = client.post(
         "/api/ban",
-        json={"room_id": 22210347, "uid": 42, "hour": 1},
+        json={"room_id": 22210347, "uid": 42, "hour": 2},
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 400
     assert fake_banlist_manager.on_ban_calls == []
 
 
-@pytest.mark.parametrize("hour", [0, 1, 24, 168, 720])
+@pytest.mark.parametrize("hour", [-1, 0, 2, 4, 24, 168])
 def test_post_ban_accepts_only_supported_duration_levels(
     client: TestClient,
     fake_bili_client: AsyncMock,
@@ -312,7 +314,7 @@ def test_post_ban_accepts_only_supported_duration_levels(
     )
 
 
-@pytest.mark.parametrize("hour", [-1, 2, 23, 721])
+@pytest.mark.parametrize("hour", [-2, 1, 23, 720, 721])
 def test_post_ban_rejects_unsupported_duration_without_upstream_call(
     client: TestClient,
     fake_bili_client: AsyncMock,
@@ -340,7 +342,7 @@ def test_post_ban_rejects_reason_longer_than_200_chars(
         json={
             "room_id": 22210347,
             "uid": 42,
-            "hour": 1,
+            "hour": 2,
             "reason": "x" * 201,
         },
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
@@ -366,7 +368,7 @@ def test_post_ban_auth_expired_returns_401_and_fires_handle_auth_expired(
 
     response = client.post(
         "/api/ban",
-        json={"room_id": 22210347, "uid": 42, "hour": 1},
+        json={"room_id": 22210347, "uid": 42, "hour": 2},
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 401
@@ -391,7 +393,7 @@ def test_post_ban_permission_denied_returns_403(
 
     response = client.post(
         "/api/ban",
-        json={"room_id": 22210347, "uid": 42, "hour": 1},
+        json={"room_id": 22210347, "uid": 42, "hour": 2},
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 403
@@ -408,7 +410,7 @@ def test_post_ban_rate_limited_returns_429(
 
     response = client.post(
         "/api/ban",
-        json={"room_id": 22210347, "uid": 42, "hour": 1},
+        json={"room_id": 22210347, "uid": 42, "hour": 2},
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 429
@@ -469,9 +471,11 @@ def test_get_ban_list_returns_manager_state_when_running(
     assert uids == [1, 2]
     assert all(set(entry) == {
         "block_id",
-        "uid",
-        "uname",
-        "hour",
+            "uid",
+            "uname",
+            "operator_uid",
+            "operator_name",
+            "hour",
         "reason",
         "created_at",
         "expires_at",
@@ -505,6 +509,8 @@ def test_get_ban_list_falls_back_to_bili_client_when_manager_not_running(
             "block_id": None,
             "uid": 7,
             "uname": "",
+            "operator_uid": None,
+            "operator_name": "",
             "hour": 3,
             "reason": "",
             "created_at": None,
@@ -526,6 +532,8 @@ def test_get_ban_list_refresh_true_forces_running_manager_refresh(
             "block_id": 88,
             "uid": 8,
             "uname": "fresh",
+            "operator_uid": 77,
+            "operator_name": "room-admin",
             "hour": 24,
             "reason": "spam",
             "created_at": 1700000000,
@@ -556,6 +564,7 @@ def test_get_ban_list_normalizes_bilibili_field_aliases(
             {
                 "id": "91",
                 "uid": "305721696",
+                "name": "room-admin",
                 "tuid": "9",
                 "tname": "alias-user",
                 "msg": "manual reason",
@@ -576,6 +585,8 @@ def test_get_ban_list_normalizes_bilibili_field_aliases(
             "block_id": 91,
             "uid": 9,
             "uname": "alias-user",
+            "operator_uid": 305721696,
+            "operator_name": "room-admin",
             "hour": -1,
             "reason": "manual reason",
             "created_at": "2026-07-10 19:00:00",

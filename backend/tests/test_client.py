@@ -14,6 +14,7 @@ TDD step 1: write tests FIRST. They MUST fail before implementation exists.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -490,11 +491,72 @@ def test_ban_user_success_returns_true() -> None:
         return httpx.Response(200, json={"code": 0, "data": {"id": 1}})
 
     client = make_client(handler)
-    assert run(client.ban_user(room_id=22210347, uid=12345, hour=1, msg="stop")) is True
+    assert run(client.ban_user(room_id=22210347, uid=12345, hour=2, msg="stop")) is True
 
-    # Verify csrf is in the body
-    body = captured[0].content.decode()
-    assert "csrf" in body
+    assert captured[0].url.path.endswith(
+        "/xlive/web-ucenter/v1/banned/AddSilentUser"
+    )
+    body = parse_qs(captured[0].content.decode(), keep_blank_values=True)
+    assert body == {
+        "room_id": ["22210347"],
+        "tuid": ["12345"],
+        "mobile_app": ["web"],
+        "type": ["1"],
+        "hour": ["2"],
+        "csrf_token": [""],
+        "csrf": [""],
+    }
+
+
+def test_ban_user_session_uses_official_type_two_contract() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"code": 0, "data": {"id": 1}})
+
+    client = make_client(handler)
+    assert run(client.ban_user(room_id=1601605, uid=12345, hour=0)) is True
+
+    assert captured[0].url.path.endswith(
+        "/xlive/web-ucenter/v1/banned/AddSilentUser"
+    )
+    body = parse_qs(captured[0].content.decode(), keep_blank_values=True)
+    assert body == {
+        "room_id": ["1601605"],
+        "tuid": ["12345"],
+        "mobile_app": ["web"],
+        "type": ["2"],
+        "hour": ["0"],
+        "csrf_token": [""],
+        "csrf": [""],
+    }
+
+
+@pytest.mark.parametrize("hour", [-1, 2, 4, 24, 168])
+def test_ban_user_timed_and_permanent_use_type_one(hour: int) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"code": 0, "data": {"id": 1}})
+
+    client = make_client(handler)
+    assert run(client.ban_user(room_id=1601605, uid=12345, hour=hour)) is True
+
+    assert captured[0].url.path.endswith(
+        "/xlive/web-ucenter/v1/banned/AddSilentUser"
+    )
+    body = parse_qs(captured[0].content.decode(), keep_blank_values=True)
+    assert body == {
+        "room_id": ["1601605"],
+        "tuid": ["12345"],
+        "mobile_app": ["web"],
+        "type": ["1"],
+        "hour": [str(hour)],
+        "csrf_token": [""],
+        "csrf": [""],
+    }
 
 
 @pytest.mark.parametrize(
@@ -512,7 +574,7 @@ def test_ban_user_maps_business_error_codes(code: int, expected_exc: type) -> No
 
     client = make_client(handler)
     with pytest.raises(expected_exc) as excinfo:
-        run(client.ban_user(room_id=22210347, uid=1, hour=1))
+        run(client.ban_user(room_id=22210347, uid=1, hour=2))
     assert excinfo.value.code == code
 
 

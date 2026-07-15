@@ -488,23 +488,27 @@ class BilibiliClient:
         hour: int,
         msg: str = "",
     ) -> bool:
-        """POST `/xlive/web-ucenter/v1/banned/AddSilentUser`.
+        """Ban ``uid`` for the current stream or a fixed number of hours.
 
         Returns `True` on `code == 0`. Raises a typed exception on any
-        non-zero business code. `hour=-1` = permanent ban,
-        `hour=0` = this stream only, `hour>0` = N hours.
+        non-zero business code. ``hour=0`` means the current stream only;
+        positive values are fixed-hour bans.
+
+        Bilibili's current live-room web client uses ``AddSilentUser`` for all
+        duration levels. Session-only bans use ``type=2, hour=0``; timed and
+        permanent bans use ``type=1`` with a positive hour value or ``-1``.
+        ``msg`` remains part of our public method for local evidence/API
+        compatibility; the upstream request does not accept it.
         """
         url = f"{_LIVE_BASE_URL}/xlive/web-ucenter/v1/banned/AddSilentUser"
         form: dict[str, str] = {
             "room_id": str(room_id),
             "tuid": str(uid),
-            "msg": msg,
             "mobile_app": "web",
+            "type": "2" if hour == 0 else "1",
             "hour": str(int(hour)),
-            "type": "1",
             "csrf_token": self._csrf_token,
             "csrf": self._csrf_token,
-            "visit_id": "",
         }
         response = await self._client.post(
             url, data=form, headers=_DEFAULT_HEADERS

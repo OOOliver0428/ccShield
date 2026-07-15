@@ -11,10 +11,11 @@
  * | label | hour | meaning                       |
  * | ----- | ---- | ----------------------------- |
  * | 本场 | 0    | until live stream ends        |
- * | 1小时 | 1    |                               |
+ * | 2小时 | 2    |                               |
+ * | 4小时 | 4    |                               |
  * | 24小时 | 24  |                               |
  * | 7天   | 168  | 7 × 24                        |
- * | 30天  | 720  | 30 × 24                       |
+ * | 永久  | -1   | no automatic expiry           |
  * Flow:
  *
  * 1. User picks a duration (radio-like segmented control).
@@ -27,6 +28,7 @@
  * state; this widget only initiates writes.
  */
 import { computed, ref } from "vue";
+import { ElMessage } from "element-plus";
 import { httpClient } from "../api/client";
 import { useRoomStore } from "../stores/room";
 import { useBanStore } from "../stores/ban";
@@ -38,10 +40,11 @@ interface DurationOption {
 
 const DURATION_OPTIONS: readonly DurationOption[] = [
   { label: "本场", hour: 0 },
-  { label: "1小时", hour: 1 },
+  { label: "2小时", hour: 2 },
+  { label: "4小时", hour: 4 },
   { label: "24小时", hour: 24 },
   { label: "7天", hour: 168 },
-  { label: "30天", hour: 720 },
+  { label: "永久", hour: -1 },
 ];
 
 const props = defineProps<{
@@ -57,7 +60,7 @@ const emit = defineEmits<{
 const room = useRoomStore();
 const banStore = useBanStore();
 
-const selectedHour = ref<number>(1);
+const selectedHour = ref<number>(2);
 const reason = ref<string>("");
 const submitting = ref<boolean>(false);
 const errorMsg = ref<string | null>(null);
@@ -118,6 +121,13 @@ async function onBan(): Promise<void> {
           ? Math.floor(Date.now() / 1000) + selectedHour.value * 3600
           : null,
       pending: true,
+    });
+    const durationLabel = DURATION_OPTIONS.find(
+      (option) => option.hour === selectedHour.value,
+    )?.label ?? `${selectedHour.value}小时`;
+    ElMessage.success({
+      message: `已成功禁言 ${props.uname || `uid:${props.uid}`}（${durationLabel}）`,
+      duration: 3000,
     });
     emit("success", { uid: props.uid });
     reason.value = "";
@@ -211,7 +221,7 @@ async function onBan(): Promise<void> {
 }
 .duration-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
 }
 .duration-option {

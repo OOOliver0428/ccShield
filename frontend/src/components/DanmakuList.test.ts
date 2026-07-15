@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
+import { ElMessage } from "element-plus";
 import { http, HttpResponse } from "msw";
 import { server } from "../__tests__/setup";
 import { useBanStore } from "../stores/ban";
@@ -147,6 +148,20 @@ describe("DanmakuList.vue", () => {
     expect(scRow.find('[data-testid="sc-text"]').text()).toBe("gift!");
   });
 
+  it("orders the single-row SC queue by price from high to low", () => {
+    const store = useDanmakuStore();
+    store.addSc(makeSc(1, "low", 30));
+    store.addSc(makeSc(2, "high", 500));
+    store.addSc(makeSc(3, "middle", 100));
+
+    const wrapper = mount(DanmakuList);
+    const prices = wrapper
+      .findAll('[data-testid="sc-price"]')
+      .map((item) => item.text());
+
+    expect(prices).toEqual(["¥500", "¥100", "¥30"]);
+  });
+
   it("renders empty-state placeholder when no events", () => {
     const wrapper = mount(DanmakuList);
     expect(wrapper.find('[data-testid="empty"]').exists()).toBe(true);
@@ -182,6 +197,9 @@ describe("DanmakuList.vue", () => {
       }),
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const successToast = vi
+      .spyOn(ElMessage, "success")
+      .mockReturnValue({ close: vi.fn() });
 
     const wrapper = mount(DanmakuList);
     await wrapper.find('[data-testid="quick-ban-btn"]').trigger("click");
@@ -206,6 +224,11 @@ describe("DanmakuList.vue", () => {
       pending: true,
       block_id: null,
     });
+    expect(successToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "已成功禁言 user7（本场直播）",
+      }),
+    );
   });
 
   it("quick 本场禁言 cancel never calls the backend", async () => {
@@ -256,7 +279,8 @@ describe("DanmakuList.vue", () => {
     const panel = wrapper.find('[data-testid="ban-panel"]');
     expect(panel.exists()).toBe(true);
     expect(panel.text()).toContain("user9");
-    expect(panel.findAll('[data-testid="duration-option"]')).toHaveLength(5);
+    expect(panel.findAll('[data-testid="duration-option"]')).toHaveLength(6);
+    expect(panel.text()).toContain("永久");
   });
 
   it("auto-scrolls to the bottom on new danmaku when pinned", async () => {
@@ -286,7 +310,7 @@ describe("DanmakuList.vue", () => {
     wrapper.unmount();
   });
 
-  it("respects user scroll-up and does NOT auto-scroll", async () => {
+  it("keeps review position, counts new messages, and jumps to latest on demand", async () => {
     const store = useDanmakuStore();
 
     const wrapper = mount(DanmakuList, { attachTo: document.body });
@@ -307,9 +331,46 @@ describe("DanmakuList.vue", () => {
 
     store.addDanmaku(makeDanmaku(1, "after-scroll-up"));
     await wrapper.vm.$nextTick();
+    store.addDanmaku(makeDanmaku(2, "still-reviewing"));
+    await wrapper.vm.$nextTick();
 
     // Should NOT have been moved to the bottom.
     expect(scrollRoot.scrollTop).toBe(0);
+    const latestButton = wrapper.find('[data-testid="view-latest-btn"]');
+    expect(latestButton.exists()).toBe(true);
+    expect(latestButton.text()).toContain("查看最新弹幕");
+    expect(latestButton.text()).toContain("2");
+
+    await latestButton.trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(scrollRoot.scrollTop).toBe(scrollRoot.scrollHeight);
+    expect(wrapper.find('[data-testid="view-latest-btn"]').exists()).toBe(false);
+
+    wrapper.unmount();
+  });
+
+  it("an upward mouse wheel enters review mode before the next message", async () => {
+    const store = useDanmakuStore();
+    const wrapper = mount(DanmakuList, { attachTo: document.body });
+    const scrollRoot = wrapper.find('[data-testid="scroll-root"]').element as HTMLElement;
+
+    Object.defineProperty(scrollRoot, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(scrollRoot, "clientHeight", {
+      configurable: true,
+      get: () => 100,
+    });
+    scrollRoot.scrollTop = 400;
+
+    scrollRoot.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+    store.addDanmaku(makeDanmaku(3, "arrived-during-review"));
+    await wrapper.vm.$nextTick();
+
+    expect(scrollRoot.scrollTop).toBe(400);
+    expect(wrapper.find('[data-testid="view-latest-btn"]').exists()).toBe(true);
 
     wrapper.unmount();
   });

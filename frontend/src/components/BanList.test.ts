@@ -12,6 +12,8 @@ function makeEntry(uid: number, extras: Partial<BanEntry> = {}): BanEntry {
     block_id: uid,
     uid,
     uname: `user${uid}`,
+    operator_uid: null,
+    operator_name: "",
     hour: 1,
     reason: "",
     created_at: 1_700_000_000,
@@ -60,6 +62,21 @@ describe("BanList.vue", () => {
 
     const wrapper = mount(BanList);
     expect(wrapper.find('[data-testid="ban-row"]').text()).toContain("uid:99");
+  });
+
+  it("renders the moderator name and uid returned by the ban list", () => {
+    const store = useBanStore();
+    store.applySnapshot([
+      makeEntry(99, {
+        operator_uid: 55,
+        operator_name: "room-admin",
+      }),
+    ]);
+
+    const wrapper = mount(BanList);
+    expect(wrapper.find('[data-testid="ban-operator"]').text()).toBe(
+      "操作人：room-admin (uid:55)",
+    );
   });
 
   it("filters the list locally by username, uid or reason", async () => {
@@ -208,6 +225,7 @@ describe("BanList.vue", () => {
     const wrapper = mount(BanList);
 
     expect(wrapper.find('[data-testid="pending-label"]').text()).toBe("正在同步");
+    expect(wrapper.find('[data-testid="ban-operator"]').text()).toBe("操作人：同步中");
     expect(wrapper.find('[data-testid="ban-row"]').text()).toContain("刷屏");
     expect(
       wrapper.find('[data-testid="unban-btn"]').attributes("disabled"),

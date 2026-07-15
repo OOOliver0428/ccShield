@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { httpClient } from "../api/client";
 import { useBanStore } from "../stores/ban";
 import { useDanmakuStore, type DanmakuItem } from "../stores/danmaku";
@@ -20,21 +21,35 @@ import SuperChatItem from "./SuperChatItem.vue";
  * SuperChats render via ``SuperChatItem`` with their own price-tagged
  * styling so they're visually distinguishable from organic chat.
  *
- * Auto-scroll behaviour: every time the list grows, we scroll the
- * container to the bottom — except when the user has scrolled up
- * to read history. The ``userScrolledUp`` flag flips on a wheel/
- * scroll event and resets whenever a NEW event arrives AND the
- * container was already pinned to the bottom.
+ * Auto-scroll behaviour: every new message follows the live edge unless the
+ * user scrolls upward to review history. New messages never release review
+ * mode; instead a footer action lets the moderator jump back to the latest
+ * message and resume following the stream.
  */
 const danmaku = useDanmakuStore();
 const banStore = useBanStore();
 const room = useRoomStore();
 const scrollRoot = ref<HTMLElement | null>(null);
 const userScrolledUp = ref<boolean>(false);
+const unseenDanmakuCount = ref<number>(0);
 const selectedForBan = ref<DanmakuItem | null>(null);
 const actionError = ref<string | null>(null);
+const rowKeys = new WeakMap<DanmakuItem, number>();
+let nextRowKey = 1;
 
 const hasDanmaku = computed(() => danmaku.list.length > 0);
+const sortedScList = computed(() =>
+  [...danmaku.scList].sort((left, right) => right.price - left.price),
+);
+
+function rowKey(item: DanmakuItem): number {
+  const existing = rowKeys.get(item);
+  if (existing !== undefined) return existing;
+  const key = nextRowKey;
+  nextRowKey += 1;
+  rowKeys.set(item, key);
+  return key;
+}
 
 function isPinnedToBottom(el: HTMLElement): boolean {
   // 8px tolerance — sub-pixel scroll heights vary by browser.
@@ -44,13 +59,30 @@ function isPinnedToBottom(el: HTMLElement): boolean {
 function onScroll(): void {
   const el = scrollRoot.value;
   if (el === null) return;
-  userScrolledUp.value = !isPinnedToBottom(el);
+  const pinned = isPinnedToBottom(el);
+  userScrolledUp.value = !pinned;
+  if (pinned) unseenDanmakuCount.value = 0;
+}
+
+function onWheel(event: WheelEvent): void {
+  const el = scrollRoot.value;
+  if (
+    event.deltaY < 0
+    && el !== null
+    && el.scrollHeight > el.clientHeight
+  ) {
+    userScrolledUp.value = true;
+  }
 }
 
 watch(
-  () => danmaku.list.length,
-  async () => {
-    if (userScrolledUp.value) return;
+  () => danmaku.list.at(-1),
+  async (latest, previous) => {
+    if (latest === undefined || latest === previous) return;
+    if (userScrolledUp.value) {
+      unseenDanmakuCount.value += 1;
+      return;
+    }
     await nextTick();
     const el = scrollRoot.value;
     if (el !== null) {
@@ -59,9 +91,18 @@ watch(
   },
 );
 
+async function jumpToLatest(): Promise<void> {
+  userScrolledUp.value = false;
+  unseenDanmakuCount.value = 0;
+  await nextTick();
+  const el = scrollRoot.value;
+  if (el !== null) el.scrollTop = el.scrollHeight;
+}
+
 function onClear(): void {
   danmaku.clear();
   userScrolledUp.value = false;
+  unseenDanmakuCount.value = 0;
 }
 
 function formatTs(ts: number): string {
@@ -116,6 +157,10 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
       expires_at: null,
       pending: true,
     });
+    ElMessage.success({
+      message: `已成功禁言 ${item.uname}（本场直播）`,
+      duration: 3000,
+    });
   } catch (err) {
     actionError.value = (err as Error).message || "禁言失败";
   } finally {
@@ -159,7 +204,7 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
       </div>
       <div class="sc-cards">
         <SuperChatItem
-          v-for="sc in danmaku.scList"
+          v-for="sc in sortedScList"
           :key="sc.id"
           :sc="sc"
         />
@@ -198,6 +243,7 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
       role="log"
       aria-label="实时弹幕"
       @scroll="onScroll"
+      @wheel.passive="onWheel"
     >
       <template v-if="!hasDanmaku">
         <div class="empty" data-testid="empty">
@@ -208,8 +254,8 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
       </template>
       <template v-else>
         <div
-          v-for="(item, idx) in danmaku.list"
-          :key="`d-${idx}`"
+          v-for="item in danmaku.list"
+          :key="rowKey(item)"
           class="row"
           data-testid="danmaku-row"
         >
@@ -249,6 +295,22 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
           </span>
         </div>
       </template>
+    </div>
+
+    <div
+      v-if="userScrolledUp && unseenDanmakuCount > 0"
+      class="review-footer"
+      data-testid="review-footer"
+    >
+      <button
+        type="button"
+        class="latest-button"
+        data-testid="view-latest-btn"
+        @click="jumpToLatest"
+      >
+        <span>查看最新弹幕</span>
+        <strong>{{ unseenDanmakuCount }}</strong>
+      </button>
     </div>
   </div>
 </template>
@@ -333,7 +395,7 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
 }
 .sc-panel {
   flex: 0 0 auto;
-  max-height: 36%;
+  overflow: hidden;
   padding: 10px 12px 12px;
   border-bottom: 1px solid rgb(242 185 95 / 16%);
   background: linear-gradient(180deg, rgb(242 185 95 / 8%), rgb(242 185 95 / 3%));
@@ -357,11 +419,22 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   font-weight: 400;
 }
 .sc-cards {
-  display: grid;
-  max-height: 210px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  height: 100px;
+  align-items: flex-start;
   gap: 8px;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 7px;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-gutter: stable;
+}
+.sc-cards :deep(.sc-card) {
+  width: clamp(260px, 42vw, 340px);
+  height: 84px;
+  flex: 0 0 clamp(260px, 42vw, 340px);
+  scroll-snap-align: start;
 }
 .scroll-root {
   flex: 1;
@@ -370,6 +443,46 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   padding: 7px 8px 12px;
   font-size: 13px;
   line-height: 1.5;
+}
+.review-footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--cc-border);
+  background: var(--cc-fill-faint);
+}
+.latest-button {
+  display: inline-flex;
+  min-height: 32px;
+  padding: 6px 12px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgb(124 140 255 / 32%);
+  border-radius: 999px;
+  color: var(--cc-primary-emphasis);
+  background: var(--cc-primary-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.latest-button:hover {
+  border-color: rgb(124 140 255 / 58%);
+  background: rgb(124 140 255 / 18%);
+}
+.latest-button strong {
+  display: inline-grid;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--cc-on-primary, #fff);
+  background: var(--cc-primary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
 }
 .ban-panel {
   position: absolute;
@@ -529,8 +642,9 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   .row {
     flex-wrap: wrap;
   }
-  .sc-cards {
-    grid-template-columns: minmax(0, 1fr);
+  .sc-cards :deep(.sc-card) {
+    width: min(280px, 82vw);
+    flex-basis: min(280px, 82vw);
   }
 }
 @media (max-width: 900px) {
@@ -554,9 +668,6 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   .danmaku-list {
     height: 100%;
     min-height: 0;
-  }
-  .sc-panel {
-    max-height: 30%;
   }
   .row {
     flex-wrap: nowrap;

@@ -245,12 +245,30 @@ async def test_start_indexes_real_payload_by_target_uid() -> None:
     try:
         assert set(mgr._bans) == {1001, 1002}
         assert mgr._bans[1001]["uname"] == "target-a"
+        assert mgr._bans[1001]["operator_uid"] == 55
+        assert mgr._bans[1001]["operator_name"] == "moderator"
         assert mgr._bans[1001]["hour"] == 24
         assert mgr._bans[1002]["uname"] == "target-b"
+        assert mgr._bans[1002]["operator_uid"] == 55
+        assert mgr._bans[1002]["operator_name"] == "moderator"
         assert mgr._bans[1002]["hour"] == -1
         assert mgr._bans[1002]["expires_at"] == "永久"
     finally:
         await mgr.stop()
+
+
+def test_normalized_pending_entry_does_not_treat_target_as_operator() -> None:
+    """The normalized uid/uname fallback describes the muted user."""
+    from app.room.banlist import normalize_ban_entry
+
+    entry = normalize_ban_entry(
+        {"uid": 1001, "uname": "target-a", "pending": True}
+    )
+
+    assert entry is not None
+    assert entry["uid"] == 1001
+    assert entry["operator_uid"] is None
+    assert entry["operator_name"] == ""
 
 
 # ---------------------------------------------------------------------------

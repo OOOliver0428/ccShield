@@ -32,6 +32,9 @@ export interface BanEntry {
   block_id: number | null;
   /** Display name; empty when the upstream payload omits it. */
   uname: string;
+  /** Moderator who created the ban, when supplied by Bilibili. */
+  operator_uid: number | null;
+  operator_name: string;
   /** Ban duration in hours. */
   hour: number | null;
   /** Operator-supplied reason. */
@@ -80,6 +83,8 @@ export const useBanStore = defineStore("ban", () => {
       block_id: entry.block_id ?? null,
       uid: entry.uid,
       uname: entry.uname ?? "",
+      operator_uid: entry.operator_uid ?? null,
+      operator_name: entry.operator_name ?? "",
       hour: entry.hour ?? null,
       reason: entry.reason ?? "",
       created_at: entry.created_at ?? null,

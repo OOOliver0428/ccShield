@@ -98,13 +98,16 @@ regression. Cross-check the WS subscribe params in the dev console.
 ### 6. Ban the test account (small号)
 
 From the test account, post a danmaku like "smoke test 1". Wait for
-it to appear in the list. Click the ban control on that entry
-(usually a "封禁" button or right-click menu; the exact UI depends on
-your build). Confirm.
+it to appear in the list. Use “本场禁言” for the lowest-risk verification,
+or open “更多禁言” and choose a duration. The available values are 本场、
+2 小时、4 小时、24 小时、7 天和永久. Confirm the target UID and duration
+in the second confirmation dialog before continuing. Do not use 永久 unless
+that exact operation was explicitly approved and the recovery step is ready.
 
-Within ~1 second, the entry should disappear from the danmaku list
-(it's a ban, not a delete, but the panel treats them equivalently for
-display). Open the banlist view: the test account should be there.
+After the API returns, a non-blocking success message should appear without
+requiring another click. The historical danmaku remains visible as audit
+context. Open the banlist view: the test account should be there, along with
+the operator name/UID when B站 supplies those fields.
 
 Now watch the WS frames in the browser dev console (Network tab →
 the `/api/ws/banlist` connection). You should see a banlist update
@@ -124,6 +127,15 @@ the next WS-pushed frame should carry a removal. The test account's
 next danmaku in the room should re-appear in the list (if they send
 one).
 
+### 8. Verify review mode and the 1000-message buffer
+
+While danmaku is flowing, scroll upward or drag the scrollbar away from the
+bottom. New messages must not pull the viewport back to the live edge. After
+at least one new message arrives, the footer should show “查看最新弹幕” and an
+unread count. Click it and confirm the list returns to the bottom and resumes
+automatic following. Automated tests verify the 1000-message trim boundary;
+the manual smoke only needs enough messages to exercise review/resume.
+
 ## Pass criteria
 
 The smoke test passes when:
@@ -134,6 +146,7 @@ The smoke test passes when:
    API.
 3. The ban → WS-push → banlist visible loop in step 6 completes.
 4. The unban → WS-push → banlist empty loop in step 7 completes.
+5. Review mode holds position and “查看最新弹幕” resumes live following.
 
 Anything less is a regression. Note which step failed, capture the
 backend log tail (`uv run uvicorn` output) and the relevant browser
