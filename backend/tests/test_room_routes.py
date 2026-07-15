@@ -531,10 +531,8 @@ def test_active_super_chat_replays_after_chat_history_eviction(
 
     async def _register_and_flush() -> None:
         await bridge.register_ws(ws)
-        for _ in range(100):
-            if ws.send_json.await_count == 51:
-                break
-            await asyncio.sleep(0)
+        queue = bridge._client_queues[ws]
+        await asyncio.wait_for(queue.join(), timeout=1.0)
         await bridge.unregister_ws(ws)
 
     asyncio.run(_register_and_flush())

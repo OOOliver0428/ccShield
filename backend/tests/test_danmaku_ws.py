@@ -529,11 +529,30 @@ async def test_queue_full_drops_messages_without_crashing() -> None:
     that yields for 10 ms per message — the queue (maxsize=4) fills up
     and the next ``put_nowait`` drops with a warning.
     """
+    class HoldOpenFakeWebSocket(FakeWebSocket):
+        """Keep the single mocked connection open after its frames drain."""
+
+        def __init__(self, recv_frames: list[bytes]) -> None:
+            super().__init__(recv_frames)
+            self._closed_event = asyncio.Event()
+
+        async def recv(self) -> bytes:
+            if self.closed:
+                raise ConnectionClosed(None, None)
+            if self._recv:
+                return self._recv.pop(0)
+            await self._closed_event.wait()
+            raise ConnectionClosed(None, None)
+
+        async def close(self) -> None:
+            await super().close()
+            self._closed_event.set()
+
     bili = make_bili_client(user_info={"mid": 99})
     fakes: list[FakeWebSocket] = []
 
     async def fake_connect(_url: str, **_kw: Any) -> FakeWebSocket:
-        ws = FakeWebSocket(
+        ws = HoldOpenFakeWebSocket(
             recv_frames=[pack_auth_rsp(0)]
             + [pack_danmu_msg(dm_v2=f"m-{i}") for i in range(50)]
         )

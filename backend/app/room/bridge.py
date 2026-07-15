@@ -106,7 +106,7 @@ class RoomBridge:
         }
         self._clients: set[WebSocket] = set()
         self._client_queues: dict[
-            WebSocket, asyncio.Queue[dict[str, object]]
+            WebSocket, asyncio.Queue[dict[str, object] | None]
         ] = {}
         self._sender_tasks: dict[WebSocket, asyncio.Task[None]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
@@ -226,7 +226,7 @@ class RoomBridge:
             # queued again as a live event for this client.
             snapshot = self._replay_snapshot()
             queue_size = max(self._client_queue_maxsize, len(snapshot) + 1)
-            queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(
+            queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue(
                 maxsize=queue_size
             )
             for event in snapshot:
@@ -252,21 +252,46 @@ class RoomBridge:
         current = asyncio.current_task()
         async with self._register_lock:
             self._clients.discard(ws)
-            self._client_queues.pop(ws, None)
+            queue = self._client_queues.pop(ws, None)
             sender = self._sender_tasks.pop(ws, None)
         if sender is not None and sender is not current:
-            sender.cancel()
+            if queue is not None:
+                self._signal_sender_stop(queue)
+            else:
+                sender.cancel()
             await asyncio.gather(sender, return_exceptions=True)
+
+    @staticmethod
+    def _signal_sender_stop(
+        queue: asyncio.Queue[dict[str, object] | None],
+    ) -> None:
+        """Discard stale payloads and wake an idle sender for clean shutdown.
+
+        ``Task.cancel()`` can leave an ``asyncio.wait_for(send_json(...))``
+        chain pending on Python 3.11.  A queue sentinel lets the sender finish
+        naturally after its current send has returned, with no orphan task.
+        """
+
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                queue.task_done()
+        queue.put_nowait(None)
 
     async def _client_sender(
         self,
         ws: WebSocket,
-        queue: asyncio.Queue[dict[str, object]],
+        queue: asyncio.Queue[dict[str, object] | None],
     ) -> None:
         try:
             while True:
                 payload = await queue.get()
                 try:
+                    if payload is None:
+                        return
                     await asyncio.wait_for(
                         ws.send_json(payload),
                         timeout=self._send_timeout,
@@ -312,7 +337,13 @@ class RoomBridge:
         """
         self._metrics.events_received += 1
         payload: dict[str, object] = event.model_dump()
-        slow_clients: list[tuple[WebSocket, asyncio.Task[None] | None]] = []
+        slow_clients: list[
+            tuple[
+                WebSocket,
+                asyncio.Queue[dict[str, object] | None] | None,
+                asyncio.Task[None] | None,
+            ]
+        ] = []
 
         # State mutation, client snapshot replay and live enqueue share this
         # small critical section. That makes registration atomic with respect
@@ -337,13 +368,17 @@ class RoomBridge:
             for ws in tuple(self._clients):
                 queue = self._client_queues.get(ws)
                 if queue is None:
-                    slow_clients.append((ws, self._sender_tasks.pop(ws, None)))
+                    slow_clients.append(
+                        (ws, None, self._sender_tasks.pop(ws, None))
+                    )
                     self._clients.discard(ws)
                     continue
                 try:
                     queue.put_nowait(payload)
                 except asyncio.QueueFull:
-                    slow_clients.append((ws, self._sender_tasks.pop(ws, None)))
+                    slow_clients.append(
+                        (ws, queue, self._sender_tasks.pop(ws, None))
+                    )
                     self._clients.discard(ws)
                     self._client_queues.pop(ws, None)
                     continue
@@ -361,9 +396,14 @@ class RoomBridge:
                 self._room_session.room_id,
                 event.type,
             )
-            for ws, sender in slow_clients:
-                if sender is not None:
+            for ws, queue, sender in slow_clients:
+                if queue is not None:
+                    self._signal_sender_stop(queue)
+                elif sender is not None:
                     sender.cancel()
+                if sender is not None:
+                    self._cleanup_tasks.add(sender)
+                    sender.add_done_callback(self._cleanup_tasks.discard)
                 self._schedule_close(ws)
 
     async def close(self) -> None:
@@ -376,20 +416,21 @@ class RoomBridge:
 
         async with self._register_lock:
             clients = list(self._clients)
+            queues = list(self._client_queues.values())
             senders = list(self._sender_tasks.values())
             self._clients.clear()
             self._client_queues.clear()
             self._sender_tasks.clear()
 
-        for sender in senders:
-            sender.cancel()
-        if senders:
-            await asyncio.gather(*senders, return_exceptions=True)
+        for queue in queues:
+            self._signal_sender_stop(queue)
         if clients:
             await asyncio.gather(
                 *(self._close_ws(ws) for ws in clients),
                 return_exceptions=True,
             )
+        if senders:
+            await asyncio.gather(*senders, return_exceptions=True)
         cleanup = list(self._cleanup_tasks)
         if cleanup:
             await asyncio.gather(*cleanup, return_exceptions=True)
