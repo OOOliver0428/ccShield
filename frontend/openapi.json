@@ -3,7 +3,7 @@
   "info": {
     "title": "ccShield backend",
     "description": "Bilibili live-room moderator tool — backend API.",
-    "version": "2.0.4"
+    "version": "2.1.0"
   },
   "paths": {
     "/api/auth/bootstrap": {

@@ -19,6 +19,9 @@ def versions() -> dict[str, str]:
     package = json.loads(
         (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
     )
+    openapi = json.loads(
+        (ROOT / "frontend" / "openapi.json").read_text(encoding="utf-8")
+    )
     app_source = (ROOT / "backend" / "app" / "__init__.py").read_text(
         encoding="utf-8"
     )
@@ -40,6 +43,7 @@ def versions() -> dict[str, str]:
         "backend/uv.lock": str(locked_backend["version"]),
         "backend/app/__init__.py": app_match.group(1),
         "frontend/package.json": str(package["version"]),
+        "frontend/openapi.json": str(openapi["info"]["version"]),
         "scripts/release.py": launcher_match.group(1),
     }
 
