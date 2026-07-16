@@ -1,5 +1,5 @@
 /**
- * room store (T14).
+ * Room store.
  *
  * Owns the user-typed room input, the resolved (canonical) room id,
  * and the connect/disconnect lifecycle against the backend's REST

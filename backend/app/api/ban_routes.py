@@ -1,4 +1,4 @@
-"""T18 — Ban REST routes + WS banlist bridge.
+"""Ban REST routes and WebSocket ban-list bridge.
 
 Mounted under ``/api`` via :data:`app.api.router.api_router`. Endpoints:
 
@@ -30,7 +30,7 @@ Error mapping (POST/DELETE ``/ban``):
 
 Test seams (mocked in ``tests/test_ban_routes.py``):
 
-- ``_get_bili_client`` — module-level lazy factory (T13 precedent);
+- ``_get_bili_client`` — module-level lazy factory;
   tests monkeypatch the function so the route uses an ``AsyncMock``.
 - ``banlist_manager`` — module-level singleton binding; tests
   monkeypatch the attribute so the route sees a fake.
@@ -421,7 +421,7 @@ async def ws_banlist_route(websocket: WebSocket, room_id: int) -> None:
     1. Accept the connection (the middleware has already verified
        ``?token=<LOCAL_TOKEN>`` and the ``Host`` guard).
     2. Lazily create the :class:`BanListManager` singleton if it
-       doesn't exist yet, and start it for ``room_id`` (T17's
+       doesn't exist yet, and start it for ``room_id`` (the manager's
        :meth:`BanListManager.start` is idempotent on the same room).
     3. Register a push callback that forwards every
        :class:`BanListMessage` as JSON. The callback swallows send
@@ -454,11 +454,11 @@ async def ws_banlist_route(websocket: WebSocket, room_id: int) -> None:
             ),
         )
         banlist_manager = manager
-        # Mirror the write into the canonical T17 singleton so the
+        # Mirror the write into the canonical manager singleton so the
         # other side (``app.room.banlist.banlist_manager``) sees it.
         set_banlist_manager(manager)
 
-    # Start (or restart) for the requested room. T17's start() cancels
+    # Start (or restart) for the requested room. The manager's start() cancels
     # a prior reconcile task and re-fetches the snapshot when the room
     # changes, so this is safe to call on every connect.
     if manager._room_id != room_id:

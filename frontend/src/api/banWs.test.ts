@@ -1,7 +1,7 @@
 /**
- * BanlistWS tests (T19).
+ * BanlistWS tests.
  *
- * Mirrors the BridgeWS test pattern (T14): a deterministic in-process
+ * Mirrors the BridgeWS test pattern with a deterministic in-process
  * WebSocket fake drives open / message / close so we can assert the
  * dispatch + reconnect schedule without real sockets.
  *
@@ -230,7 +230,7 @@ describe("BanlistWS", () => {
     expect(fakeInstances).toHaveLength(1);
   });
 
-  // F3 / Bug 4 regression — Intentional close() must NOT schedule a
+  // An intentional close() must not schedule a
   // reconnect (banlist panel stays cleared after disconnect).
   it("close() suppresses the onclose-driven reconnect schedule", async () => {
     const ws = new BanlistWS(1, "tok");

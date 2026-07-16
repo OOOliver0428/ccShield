@@ -250,7 +250,7 @@ describe("auth store", () => {
     });
   });
 
-  // F3 / Bug 5 regression — userInfo must be populated on QR login
+  // userInfo must be populated on QR login
   // (not just manual). The QR path was: startQr → pollOnce success
   // → fetchStatus; nothing ever called /auth/me, so userInfo stayed
   // null and App.vue rendered "用户" instead of the real name.

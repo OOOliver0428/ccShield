@@ -1,28 +1,55 @@
-# ccShield
+<div align="center">
+  <img src="frontend/public/brand/ccshield-product-mark.png" width="104" alt="ccShield 金毛骑士产品图标">
+  <h1>ccShield</h1>
+  <p><strong>专注弹幕审阅，让直播间管理更从容。</strong></p>
+  <p>面向哔哩哔哩直播间管理员的本地实时弹幕与基础房管工作台。</p>
+  <p>
+    <a href="https://github.com/OOOliver0428/ccShield/actions/workflows/ci.yml"><img src="https://github.com/OOOliver0428/ccShield/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v2.0.4-4f46e5" alt="Version v2.0.4"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT License"></a>
+    <a href="backend/pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11+-3776ab?logo=python&amp;logoColor=white" alt="Python 3.11+"></a>
+    <a href="frontend/package.json"><img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&amp;logoColor=white" alt="Vue 3"></a>
+  </p>
+</div>
 
-哔哩哔哩直播间弹幕管理工具，包含 FastAPI 后端和 Vue 前端。
+![ccShield 实时弹幕与房管工作台界面](docs/assets/screenshots/ccshield-workbench.png)
 
-当前版本：**v2.0.4**
+<p align="center"><sub>界面截图使用虚构的主播、用户、弹幕、醒目留言与禁言记录模拟，不包含真实账号或直播间数据。</sub></p>
 
-下一阶段以 **v2.1.0** 为目标继续迭代；Release 打包方案暂不实施，保存在
-[v2.1.0 规划草案](docs/plans/v2.1.0.md)，功能稳定后再根据实际情况复核。
+ccShield 将实时弹幕、醒目留言、直播间信息和禁言名单集中在一个界面中，帮助管理员在高流量直播间保持审阅上下文，并在明确确认后谨慎执行房管操作。
 
-![ccShield 金毛骑士产品图标](frontend/public/brand/ccshield-product-mark.png)
+> [!IMPORTANT]
+> ccShield 是非官方第三方工具，与哔哩哔哩无隶属或授权关系。使用者应遵守平台规则并自行承担账号和房管操作风险。请勿将 `.env`、Cookie、二维码或个人快捷房间配置分享或提交到仓库。
 
-## 一键启动
+## 主要功能
 
-运行前只需要安装：
+- 实时拉取并审阅普通弹幕，缓存上限为 1000 条；进入历史审阅后不被新消息打断。
+- 醒目留言固定为单行横向浏览，并按价格从高到低排列。
+- 展示舰长、提督、总督等级和粉丝牌等直播间信息。
+- 展示主播、房间号、直播标题及当前登录用户在房间中的身份。
+- 支持本场、定时和永久禁言；可查询禁言名单并基于名单记录解禁。
+- 支持常用房间快捷入口、深浅色主题、电脑版横屏与竖屏布局。
+- Cookie 运行中失效时自动停止旧连接、清理工作台并引导重新扫码。
 
-- [uv](https://docs.astral.sh/uv/)；
-- Node.js（自带 npm）或 Bun。
+## 项目状态
 
-启动器会自动同步后端依赖；如果前端依赖不存在，也会自动安装。服务就绪后会打开
-<http://127.0.0.1:5173>。如果 5173 已被占用，启动器会自动尝试 5174、5175 等后续端口，
-并打开实际选中的地址。在启动终端按 `Ctrl+C` 会同时关闭前后端。
+当前稳定版本为 **v2.0.4**，主线正在准备 **v2.1.0**。目前仍以源码方式运行，面向普通用户的免开发环境 Release 尚未发布；候选打包方案见 [v2.1.0 规划](docs/plans/v2.1.0.md)。
+
+完整版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 快速开始
+
+### 环境要求
+
+- [uv](https://docs.astral.sh/uv/)
+- Node.js（自带 npm）或 [Bun](https://bun.sh/)
+- Python 3.11 由 uv 自动准备
+
+启动器会同步缺失的依赖，启动后自动打开前端。若默认的 5173 端口被占用，会依次尝试后续可用端口。
 
 ### Windows
 
-双击 `start.cmd`，或者在 PowerShell 中运行：
+双击 `start.cmd`，或在 PowerShell 中运行：
 
 ```powershell
 .\start.cmd
@@ -37,46 +64,60 @@ chmod +x start.sh
 
 ### macOS
 
-可以双击 `start.command`，也可以在终端中运行：
+双击 `start.command`，或在终端中运行：
 
 ```bash
 chmod +x start.sh start.command
 ./start.command
 ```
 
-不希望自动打开浏览器时，追加 `--no-browser`。只检查本机依赖环境时，追加 `--check`。
+不希望自动打开浏览器时追加 `--no-browser`；只检查本机环境时追加 `--check`。在启动终端按 `Ctrl+C` 会同时关闭前后端。
 
-项目配置只读取仓库根目录的 `.env`。首次使用时不创建该文件也能启动，并可在页面中扫码登录；
-修改 `.env` 后需要重启服务。
+首次使用不需要手动填写 Cookie，页面会引导扫码登录。项目只读取根目录 `.env`；快捷房间保存在 `config/quick_rooms.json`。两个文件都只属于当前用户并被 Git 和 CI 安全检查排除。
 
-## 快捷房间配置
+## 使用提示
 
-登录后可在未连接状态点击“配置快捷房间”，使用短号或正常房间号验证主播、真实房间号和直播标题，
-验证成功后保存为一键连接入口。连接直播间后，也可以点击“一键添加当前房间”。
+### 快捷房间
 
-快捷房间保存在本机的 `config/quick_rooms.json`，首次添加时自动创建，不会上传到仓库。
-初版不提供页面删除功能；需要删除时，请先关闭 ccShield，再从该 JSON 文件的 `rooms` 数组中移除对应记录。
-文件格式可参考 `config/quick_rooms.example.json`。
+未连接时可打开快捷房间配置，使用短号或正常房间号验证主播、真实房间号和直播标题。连接后也可以一键保存当前房间。初版删除快捷房间需要在关闭 ccShield 后手动编辑 `config/quick_rooms.json`，格式见 `config/quick_rooms.example.json`。
 
-## 实时弹幕字号
+### 弹幕审阅
 
-实时弹幕标题栏提供 `A−` / `A+` 控件，可在 12、14、16、18px 四档之间调整普通弹幕字号。
-所选档位会保存在浏览器本地；SC 保持独立的固定单行布局。处于历史审阅状态时调整字号，页面会尽量保持
-当前首条可见弹幕；处于实时跟随状态时则继续停留在最新消息。
+普通弹幕字号支持 12、14、16、18px 四档并保存在浏览器本地。向上滚动或拖动滚动条会进入历史审阅状态；新弹幕继续缓存但不会改变当前位置，点击“查看最新弹幕”后恢复实时跟随。醒目留言始终保持独立的单行横向区域。
 
-## Cookie 过期处理
+### 登录过期
 
-启动时会自动验证本机 Cookie；失效时直接进入扫码登录。使用过程中如果 B站返回登录过期，ccShield 会
-停止当前房间及禁言名单同步、关闭旧连接、清理房间工作台，并显示“登录已过期”提示后自动进入扫码页。
-重新扫码会覆盖本机 `.env` 并热更新运行中的客户端，无需手动编辑 Cookie。过期前失败的禁言或解禁操作
-不会自动重试，避免重复执行房管操作。
+Cookie 在运行中失效时，ccShield 会停止房间和禁言名单同步、关闭旧 WebSocket、清理工作台并返回扫码页。过期前失败的禁言或解禁不会在重新登录后自动重试，避免重复执行房管操作。
 
-## v2.0.4 更新摘要
+## 文档
 
-- 实时弹幕新增 12、14、16、18px 四档字号，设置保存在浏览器本地，切换时保持实时跟随或历史审阅位置；
-- 字号只作用于普通弹幕及其信息元素，不改变 SC 的固定单行横向审阅布局；
-- 连接直播间后展示当前登录用户的房间身份：主播、房管、观众或暂未识别；
-- 增加 CI 硬性检查，真实 `.env` 与 `config/quick_rooms.json` 即使被强制暂存也不能进入仓库；
-- 保存 v2.1.0 免开发环境 Release 的规划草案，打包方案留待功能冻结后复核。
+| 文档 | 内容 |
+| --- | --- |
+| [文档索引](docs/README.md) | 全部开发、测试和安全文档 |
+| [配置说明](docs/config.md) | `.env`、快捷房间和本地服务配置 |
+| [测试策略](docs/testing.md) | Mock 边界、覆盖范围和禁止的真实写操作 |
+| [安全模型](docs/security.md) | Cookie、LOCAL_TOKEN、回环监听和威胁边界 |
+| [API 客户端](docs/api-client.md) | OpenAPI 与 TypeScript 客户端同步流程 |
+| [冒烟测试](docs/smoke_test.md) | 发布前人工验证流程 |
 
-完整版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+## 参与开发
+
+请阅读 [贡献指南](CONTRIBUTING.md) 和 [社区行为准则](CODE_OF_CONDUCT.md)。Bug 与功能建议请使用仓库提供的 Issue 表单；安全问题请按照 [安全策略](SECURITY.md) 私下报告。
+
+常用检查：
+
+```bash
+make lint
+make typecheck
+make test
+```
+
+后端和前端的完整命令、生成文件要求及房管操作测试边界见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 免责声明
+
+本项目仅用于合法、审慎的直播间管理。维护者不鼓励骚扰、滥用房管权限、规避平台限制或未经授权处理他人账号。B站接口可能随时变化，使用真实房间验证任何写操作前必须明确测试对象、期限和恢复方案。
+
+## 许可证
+
+ccShield 使用 [MIT License](LICENSE) 发布。

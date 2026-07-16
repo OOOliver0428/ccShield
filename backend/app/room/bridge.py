@@ -1,6 +1,6 @@
-"""WebSocket bridge between a :class:`RoomSession` and zero+ clients (T13).
+"""WebSocket bridge between a :class:`RoomSession` and zero or more clients.
 
-The bridge sits BETWEEN the T12 :class:`RoomSession` (a normalised
+The bridge sits between :class:`RoomSession` (a normalized
 event source) and the FastAPI WebSocket route. The session emits typed
 :class:`BridgeEvent` values; the bridge fans them out as JSON to
 every registered client while keeping a short replay buffer so a
@@ -18,7 +18,7 @@ Design contract:
   queue and sender task. ``_on_event`` only performs ``put_nowait``; a slow
   browser is disconnected when its queue fills and can never backpressure
   the B站 receive loop.
-* **Single bridge per process.** Matches T12's single-room invariant.
+* **Single bridge per process.** Matches the single-room invariant.
   The module-level ``room_bridge`` singleton + ``get_room_bridge`` /
   ``set_room_bridge`` helpers hold the currently-active bridge; the
   FastAPI route swaps it on ``/rooms/start`` and clears it on
@@ -115,7 +115,7 @@ class RoomBridge:
         self._closed = False
         self._metrics = _BridgeMetrics()
         # Serialises add/remove and snapshots the broadcast target list,
-        # mirroring the T12 broadcast loop's concurrency story.
+        # mirroring the room broadcast loop's concurrency behavior.
         self._register_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------

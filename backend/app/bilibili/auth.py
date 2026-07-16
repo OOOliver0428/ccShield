@@ -1,6 +1,6 @@
 """B站 (Bilibili) QR-code login + manual-fallback cookie persistence.
 
-This module owns the QR-code login flow that reccshield uses to obtain
+This module owns the QR-code login flow that ccShield uses to obtain
 ``SESSDATA`` / ``bili_jct`` / ``BUVID3`` cookies without a real browser:
 
 1. ``qr_generate`` — ``GET /x/passport-login/web/qrcode/generate``
@@ -39,7 +39,7 @@ This module owns the QR-code login flow that reccshield uses to obtain
 
 Design constraints
 ------------------
-- No FastAPI / HTTP routes here — T8 owns the route layer. This module
+- No FastAPI or HTTP routes live here; the API package owns the route layer. This module
   exposes pure async functions + one sync helper.
 - ``httpx.AsyncClient`` is always passed in (DI). The caller controls
   transport / headers / timeouts and the tests inject a
@@ -218,7 +218,7 @@ def _capture_success_cookies(response: httpx.Response) -> dict[str, str]:
     Strategy (dual-path, per-cookie):
       1. PRIMARY: ``response.cookies`` (the Set-Cookie header jar) — the
          current B站 format returns the three cookies as Set-Cookie
-         headers and no longer populates ``data.url`` (see a.log).
+         headers and no longer populates ``data.url``.
       2. FALLBACK: parse the ``data.url`` query params (legacy B站
          format) for any cookie still missing after Set-Cookie.
 
@@ -331,8 +331,8 @@ async def qr_poll(client: httpx.AsyncClient, qrcode_key: str) -> dict[str, str]:
     top-level envelope ``code`` is ALWAYS ``0`` on every poll (success
     OR an intermediate state) — the QR-login state code is in
     ``data.code`` (86101 / 86090 / 86038 / 0). Reading the top-level
-    ``code`` produced a "success on every poll" bug that masked every
-    state transition. See a.log / b.log for the curl proof.
+    ``code`` would incorrectly treat every poll as successful and mask
+    intermediate states.
 
     Returns:
         A success dict ``{status, sessdata, bili_jct, dede_user_id}`` on

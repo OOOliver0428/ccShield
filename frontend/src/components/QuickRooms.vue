@@ -3,6 +3,10 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useQuickRoomsStore, type QuickRoom } from "../stores/quickRooms";
 import { useRoomStore, type ResolveRoomResponse } from "../stores/room";
 
+const props = withDefaults(defineProps<{ demoMode?: boolean }>(), {
+  demoMode: false,
+});
+
 const quickRooms = useQuickRoomsStore();
 const room = useRoomStore();
 
@@ -33,6 +37,7 @@ watch(inputText, () => {
 });
 
 onMounted(() => {
+  if (props.demoMode) return;
   void quickRooms.load();
 });
 

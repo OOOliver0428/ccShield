@@ -8,7 +8,7 @@ import { useRoomStore } from "../stores/room";
 import BanControls from "./BanControls.vue";
 
 /**
- * BanControls.vue tests (T19).
+ * BanControls.vue tests.
  *
  * The ban duration map lives inside the component (it's a UI
  * affordance, not transport shape), so we read it back via the

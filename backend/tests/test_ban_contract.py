@@ -1,4 +1,4 @@
-"""Contract tests for the B站 ban-list HTTP API (T20) and
+"""Contract tests for the B站 ban-list HTTP API and
 :class:`~app.room.banlist.BanListManager` integration with synthetic
 fetcher payloads.
 
@@ -9,7 +9,7 @@ inline based on ccShield's known B站 field shapes
 ``GetSilentUserList``).
 
 No real Cookie / network / captured fixtures are needed at this stage.
-Real-fixture capture is deferred to the Wave 2 gate, where the
+Real-fixture capture is deferred to an explicit manual gate, where the
 synthetic shapes here will be cross-validated against actual B站
 captures. If B站 changes any code or field shape, the affected
 contract test fails — prompting a re-capture / contract revision.
@@ -91,7 +91,7 @@ def _ban_entry(uid: int, block_id: int) -> dict[str, object]:
     ``uid`` is the banned user; ``id`` is the ``block_id`` used by
     ``del_room_block_user``. Extra fields (``uname``/``face``/``room_id``)
     mirror the canonical ccShield response — kept here so a contract
-    change in those fields can be diffed at the Wave 2 gate.
+    change in those fields can be diffed during manual contract verification.
     """
     return {
         "id": block_id,

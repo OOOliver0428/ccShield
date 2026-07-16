@@ -1,6 +1,6 @@
 """Typed B站 (Bilibili) HTTP API client.
 
-This module wraps the B站 web / live APIs used by reccshield for:
+This module wraps the B站 web / live APIs used by ccShield for:
 
 - user login check (`/x/web-interface/nav`)
 - room init / room info / short-id → real-id translation
@@ -24,10 +24,10 @@ Design notes:
   `wbi_signer` from `app.bilibili.wbi`.
 - `csrf_token` (bili_jct) is lazily resolved from
   `app.config.settings.BILI_JCT` if not provided at construction. The
-  lazy import is intentional: `app.config.py` is owned by T2 (parallel);
-  this module must remain importable while T2 is still in flight.
+  lazy import is intentional so this module remains importable without
+  eagerly constructing application settings.
 - `get_ban_list` paginates all pages with a high safety cap to bound work.
-  It does NOT consult any external room-state (T17 owns that wrapping).
+  It does NOT consult any external room state; the ban-list manager owns that wrapping.
 """
 from __future__ import annotations
 
@@ -104,12 +104,12 @@ def _positive_int(value: object) -> int | None:
 def _load_settings_or_default() -> tuple[dict[str, str], str]:
     """Resolve cookies + csrf from `app.config.settings`, falling back to empty.
 
-    `app.config.py` is owned by T2 (parallel worker). This module needs to
-    remain importable even when T2 hasn't landed. We attempt a lazy import
+    This module needs to remain importable without eagerly constructing
+    application settings. We attempt a lazy import
     each call so newly-landed settings take effect without restarting.
     """
     try:
-        from app.config import settings  # lazy: T2 owns config.py (parallel)
+        from app.config import settings  # lazy to avoid eager settings construction
 
         cookies = dict(settings.cookies) if hasattr(settings, "cookies") else {}
         csrf = str(getattr(settings, "BILI_JCT", "") or "")
@@ -150,10 +150,10 @@ def _raise_for_business_code(
 
 class BilibiliClient:
     """Typed wrapper around `httpx.AsyncClient` for the B站 endpoints used
-    by reccshield.
+    by ccShield.
 
     Constructor parameters are keyword-only; the defaults read from
-    `app.config.settings` lazily so the module stays usable while T2 lands
+    `app.config.settings` lazily so the module stays usable during startup
     in parallel.
     """
 
@@ -280,7 +280,7 @@ class BilibiliClient:
     async def get_room_info(self, room_id: int) -> dict[str, Any] | None:
         """GET `/room/v1/Room/get_info`.
 
-        Per T4 spec we deliberately do NOT call `_get_anchor_name` like
+        We deliberately do not call `_get_anchor_name` like
         ccShield did (a redundant double-fetch). If the caller wants the
         anchor name they can fetch lazily elsewhere.
         """
@@ -672,7 +672,7 @@ class BilibiliClient:
             page_size: retained for API compatibility. This endpoint fixes
                 the page size server-side; its `ps` field is the page number.
             is_running: optional callback invoked once per page; if it
-                returns False, pagination stops. Wired by T17 (which owns
+                returns False, pagination stops. Wired by the ban-list manager (which owns
                 banlist) — kept optional so the MVP stays simple.
 
         Returns:

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * T22 — fan medal chip.
+ * Fan-medal chip.
  *
  * Bilibili fans wear a per-streamer "粉丝牌" (fan medal) whose level
  * rises with loyalty. The bridge ships the denormalised shape

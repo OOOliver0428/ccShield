@@ -109,13 +109,13 @@ describe("QrLogin.vue", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // F3 manual-QA regression: the page used to sit forever on
+  // The page must not sit forever on
   // "正在生成二维码…" because (a) the browser never called /api/auth/qr/start
   // (no onMounted wired startQr) and (b) the SPA tried to load the B站
   // scan-link as if it were an image src. These tests pin both halves.
   // ---------------------------------------------------------------------------
 
-  it("calls auth.startQr() automatically on mount (H1: F3 regression)", async () => {
+  it("calls auth.startQr() automatically on mount", async () => {
     server.use(
       http.post("*/api/auth/qr/start", () =>
         HttpResponse.json({

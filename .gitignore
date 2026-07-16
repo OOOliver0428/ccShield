@@ -6,10 +6,14 @@ __pycache__/
 .venv/
 venv/
 .basedpyright/
+.ruff_cache/
+.mypy_cache/
 .uv-cache/
+*.egg-info/
 
 # Test / coverage
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 .pytest_cache/
@@ -28,22 +32,25 @@ dist/
 config/quick_rooms.json
 
 # Backend test fixtures (kept out of accidental commits but allow dir creation)
-tests/fixtures/*.json
+backend/tests/fixtures/*.json
+
+# Runtime logs
+*.log
 
 # Editor / OS
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
+Desktop.ini
 *.swp
 
 # Codegraph runtime cache (symlink to ~/.omo/codegraph/...)
 .codegraph
 
-# Local Codex/pet validation artifacts and package-manager cache
+# Local development-agent artifacts and package-manager cache
+.agents/
 .codex/
 .codex-wangcai-*.json
+.omo/
 .pnpm-store/
-
-# .omo runtime/backup artifacts (planning docs tracked, runtime state not)
-.omo/run-continuation/
-.omo/drafts/*.bak

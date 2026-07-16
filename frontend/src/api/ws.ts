@@ -1,5 +1,5 @@
 /**
- * BridgeWS — frontend WebSocket client for the room event bridge (T14).
+ * BridgeWS — frontend WebSocket client for the room event bridge.
  *
  * Wraps a single ``new WebSocket(...)`` against the backend's
  * ``/api/ws/rooms/{room_id}`` endpoint and surfaces a tiny callback
@@ -135,7 +135,7 @@ export class BridgeWS {
     };
     ws.onclose = (): void => {
       this.ws = null;
-      // F3 / Bug 4: user-initiated close() must not raise the
+      // A user-initiated close() must not raise the
       // "正在重连" banner — scheduleReconnect() guards on `closed` so
       // it won't reopen anyway, but onDisconnect() is a UI callback
       // (shows the banner). Guard it explicitly.

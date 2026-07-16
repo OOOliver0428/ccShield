@@ -3,14 +3,14 @@
 The single import surface (``from app.api import api_router``) is what
 :mod:`app.main` mounts under ``/api`` so every protected REST route
 ends up under one prefix and one middleware pass. New route modules
-(``room_routes`` in T13, ``ban_routes`` in T18, etc.) are included
+(``room_routes``, ``ban_routes``, and others) are included
 here without touching ``main.py``.
 
-T13 added :data:`app.api.room_routes.router` which exposes the
+:data:`app.api.room_routes.router` exposes the
 ``/api/rooms/*`` REST surface and the ``/api/ws/rooms/{room_id}``
 WebSocket stream.
 
-T18 added :data:`app.api.ban_routes.router` which exposes the
+:data:`app.api.ban_routes.router` exposes the
 ``/api/ban`` (POST/DELETE), ``/api/ban-list/{room_id}`` REST surface
 and the ``/api/ws/rooms/{room_id}/banlist`` WebSocket stream.
 """

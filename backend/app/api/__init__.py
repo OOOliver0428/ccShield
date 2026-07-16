@@ -8,7 +8,7 @@ The package surface is intentionally narrow:
 
 - :mod:`app.api.middleware` — ``local_token_middleware`` (auth + host guard).
 - :mod:`app.api.auth_routes` — QR-poll / status / manual-cookie endpoints.
-- :mod:`app.api.router` — ``api_router`` aggregator (T13 will add room routes here).
+- :mod:`app.api.router` — ``api_router`` aggregator for all API routes.
 
 The package itself holds no logic; it exists so ``from app.api import
 api_router`` resolves to a single, stable import path.

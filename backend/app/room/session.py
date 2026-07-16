@@ -1,6 +1,6 @@
-"""Single-room session with normalized event dispatch (T12).
+"""Single-room session with normalized event dispatch.
 
-``RoomSession`` wraps the (T11) :class:`DanmakuClient` for ONE room and
+``RoomSession`` wraps :class:`DanmakuClient` for one room and
 exposes a typed callback stream to the rest of the app. We deliberately
 do NOT forward B站 raw cmd/info dicts — every event that hits a
 callback has already been normalized into a :class:`BridgeEvent`.
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 
 # Type alias for a BridgeEvent consumer. The annotation stays
-# explicit (no Any) per the T12 spec.
+# explicit (no Any) at the room-session boundary.
 BridgeCallback = Callable[[BridgeEvent], Awaitable[None]]
 
 # Default dedup buffer size — matches ccShield's RoomManager.

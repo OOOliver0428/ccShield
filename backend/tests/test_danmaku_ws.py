@@ -1,4 +1,4 @@
-"""TDD tests for Bili live-WS DanmakuClient (T11).
+"""Tests for the Bili live WebSocket DanmakuClient.
 
 Six tests, fully mocked — no real network, no real asyncio.sleep.
 
@@ -127,7 +127,7 @@ def make_bili_client(
 
 
 def pack_auth_rsp(code: int) -> bytes:
-    """Build a real AUTH_RSP frame using T3 pack_data."""
+    """Build a real AUTH_RSP frame using the protocol packer."""
     body = json.dumps({"code": code}, separators=(",", ":")).encode("utf-8")
     return proto.pack_data(body, proto.AUTH_RSP)
 

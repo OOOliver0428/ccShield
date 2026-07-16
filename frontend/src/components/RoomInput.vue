@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { useRoomStore } from "../stores/room";
 
 /**
- * T14 — room id input + connect/disconnect control.
+ * Room-id input and connect/disconnect control.
  *
  * UX flow:
  *
@@ -17,7 +17,7 @@ import { useRoomStore } from "../stores/room";
  *    ``POST /rooms/stop``; App.vue's watcher closes the WS.
  *
  * Guard badge / medal styles are intentionally NOT here — those land
- * in T22/T23 (per task scope). The status indicator is a coloured
+ * in the dedicated badge components. The status indicator is a coloured
  * dot + label, not the eventual ElementPlus tag picker.
  */
 const room = useRoomStore();

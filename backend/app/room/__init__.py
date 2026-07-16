@@ -1,8 +1,8 @@
-"""Room session package — T12.
+"""Room session package.
 
 Owns the single-room session lifecycle (``RoomSession``) and the typed
 ``BridgeEvent`` schema that flows out of it. This package is the only
-bridge between the T11 B站 wire protocol and the T13 FastAPI / WebSocket
+bridge between the B站 wire protocol and the FastAPI/WebSocket
 layer — neither side sees the raw ``cmd``/``info`` dicts.
 """
 

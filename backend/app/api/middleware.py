@@ -28,7 +28,7 @@ WebSocket exemptions:
   server, and only some clients honour ``Authorization``). For paths
   matching ``/ws/*`` OR ``/api/ws/*`` the middleware accepts
   ``?token=<settings.LOCAL_TOKEN>`` as a query-string fallback. The Host
-  guard still applies. The ``/api/ws/*`` branch covers T13's room-WS
+  guard still applies. The ``/api/ws/*`` branch covers the room WebSocket
   endpoint, which is mounted under the ``/api`` APIRouter (so its real
   URL is ``/api/ws/rooms/{room_id}``); the original ``/ws/*`` branch
   remains for any future bare-mounted WS routes.
@@ -172,7 +172,7 @@ def _is_ws_path(path: str) -> bool:
 
     The browser ``WebSocket`` API cannot reliably set the ``Authorization``
     header, so WS endpoints must accept ``?token=<token>`` instead. Both
-    the bare ``/ws/*`` mount and the ``/api/ws/*`` mount (T13's room
+    the bare ``/ws/*`` mount and the ``/api/ws/*`` room
     bridge, mounted under :data:`app.api.api_router` with prefix
     ``/api``) are recognized — the query-string fallback is the only
     auth shape browser-side WS clients can use.
@@ -242,7 +242,7 @@ class LocalTokenMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not _is_protected(path):
-            # Future non-/api non-/ws routes fall through unguarded. T13
+            # Future non-/api non-/ws routes fall through unguarded. Room routes
             # and later tasks add the prefixes; until then we deliberately
             # do not 403 — locking out the developer is worse than a
             # missing guard on a not-yet-existing path.

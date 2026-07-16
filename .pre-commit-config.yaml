@@ -1,4 +1,4 @@
-# pre-commit config — reccshield
+# pre-commit config — ccShield
 #
 # Uses `repo: local` for every hook so installation requires no network
 # (pre-commit's default remote-hook install is skipped). Hooks run on
@@ -12,8 +12,8 @@
 #   pre-commit run --all-files
 #
 # Why a local secret-scan hook:
-#   ccShield's COOKIE_AUTOBAN_SUMMARY.md:247 leaked a real SESSDATA. The
-#   cheap, fast, network-free gate is `scripts/check_secrets.sh` — it greps
+#   A historical development artifact accidentally included a real login
+#   credential. The cheap, fast, network-free gate is `scripts/check_secrets.sh` — it greps
 #   staged/working files for raw SESSDATA / bili_jct / BILI_JCT /
 #   DedeUserID patterns and blocks the commit if any match.
 #

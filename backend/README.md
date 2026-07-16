@@ -1,6 +1,6 @@
-# reccshield backend
+# ccShield backend
 
-FastAPI service for the reccshield Bilibili live-room moderator tool.
+FastAPI service for the ccShield Bilibili live-room moderator tool.
 
 ## Quick start
 

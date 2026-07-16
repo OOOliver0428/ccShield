@@ -1,4 +1,4 @@
-"""TDD tests for T18 — ban routes + WS banlist bridge.
+"""Tests for ban routes and the WebSocket ban-list bridge.
 
 Contract under test:
 
@@ -17,7 +17,7 @@ Contract under test:
   / ``ban_removed`` deltas as the manager broadcasts them.
 * ``/openapi.json`` lists ``/api/ban`` and ``/api/ban-list/{room_id}``.
 
-Mock strategy (T13/T17 precedent):
+Mock strategy:
 
 * ``app.api.ban_routes._get_bili_client`` — module-level lazy factory;
   tests monkeypatch it so REST/WS handlers see an ``AsyncMock``
@@ -29,7 +29,7 @@ Mock strategy (T13/T17 precedent):
   ``monkeypatch.setattr`` so ``require_authenticated`` /
   ``handle_auth_expired`` are observable.
 
-All endpoints live under the ``LocalTokenMiddleware`` (T8) — tests set
+All endpoints live under ``LocalTokenMiddleware`` — tests set
 ``Host: localhost`` and the LOCAL_TOKEN bearer (or ``?token=`` for WS).
 
 Adversarial coverage:
@@ -142,7 +142,7 @@ class _FakeBanListManager:
 
     async def subscribe(self, cb: Any) -> None:
         self._subscribers.append(cb)
-        # Mirror T17: send the current snapshot to the new subscriber.
+        # Send the current snapshot to the new subscriber.
         await cb({"event": "snapshot", "bans": list(self.bans.values())})
 
     async def unsubscribe(self, cb: Any) -> None:
@@ -754,7 +754,7 @@ def test_ws_connect_starts_manager_for_the_requested_room(
 def test_ws_connect_without_token_returns_401(client: TestClient) -> None:
     """Middleware blocks unauthenticated WS even on the new endpoint.
 
-    Mirrors the T13 pattern: TestClient's ``websocket_connect`` does
+    Mirrors the room-route pattern: TestClient's ``websocket_connect`` does
     not raise on auth failure in the same way a real client would, so
     we drive the middleware with a plain ``GET`` against the WS path
     (the middleware code-path is identical).

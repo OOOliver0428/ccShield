@@ -1,11 +1,11 @@
 [project]
-name = "reccshield-backend"
+name = "ccshield-backend"
 version = "2.0.4"
 description = "Bilibili live-room moderator tool — backend (FastAPI)"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-    { name = "reccshield contributors" },
+    { name = "ccShield contributors" },
 ]
 dependencies = [
     "fastapi>=0.115.0",

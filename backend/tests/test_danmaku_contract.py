@@ -1,4 +1,4 @@
-"""Contract tests for the B站 → typed-BridgeEvent pipeline (T15).
+"""Contract tests for the B站 to typed-BridgeEvent pipeline.
 
 These tests PIN the shape mapping from a B站 live-WS frame to the typed
 :class:`~app.room.events.BridgeEvent` produced by
@@ -8,7 +8,7 @@ based on the field shapes documented in ``ccShield/app/core/danmaku_ws.py``
 (lines 401-431 for DANMU_MSG, 451-472 for SUPER_CHAT_MESSAGE).
 
 No real Cookie / network / captured fixtures are needed at this stage.
-Real-fixture capture is deferred to the Wave 2 gate, where the synthetic
+Real-fixture capture is deferred to an explicit manual gate, where the synthetic
 shapes here will be cross-validated against actual B站 captures.
 
 Scenarios covered:
@@ -278,8 +278,8 @@ def test_contract_auth_rsp_does_not_become_bridge_event() -> None:
     layer but is NOT forwarded as a :class:`BridgeEvent` — it has no
     ``cmd`` field, so :meth:`RoomSession._normalize` returns ``None``.
 
-    This locks in the boundary between the T3 wire protocol and the
-    T12 normalized event stream: protocol-layer messages stay protocol.
+    This locks in the boundary between the wire protocol and the
+    normalized event stream: protocol-layer messages stay protocol.
     """
     frame = _pack_auth_rsp(AUTH_RSP_PAYLOAD)
 
@@ -303,7 +303,7 @@ async def test_contract_full_pipeline_brotli_to_callback() -> None:
     (``unpack_data`` → ``_on_raw_message`` → registered callback) and the
     callback receives the typed :class:`SuperChatEvent`.
 
-    This is the integration surface that T13 (FastAPI / WS bridge) will
+    This is the integration surface that the FastAPI/WebSocket bridge will
     rely on: synthetic frames in, typed events out, no raw ``cmd``/``info``
     dict ever leaks past ``_normalize``.
     """

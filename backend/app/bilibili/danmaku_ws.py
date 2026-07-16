@@ -1,12 +1,12 @@
-"""B站 (Bilibili) live-room WebSocket client — reccshield T11.
+"""B站 (Bilibili) live-room WebSocket client for ccShield.
 
 Ports the heartbeat / reconnect / queue / watchdog behaviour from
 ccShield/app/core/danmaku_ws.py but, by deliberate design:
 
-1. Frame pack/unpack goes through :mod:`app.bilibili.protocol` (T3).
+1. Frame pack/unpack goes through :mod:`app.bilibili.protocol`.
    The ccShield handwritten brace-matcher JSON parser is GONE — we use
    ``protocol.pack_data`` and ``protocol.unpack_data`` exclusively.
-2. The class is wired against the typed :class:`BilibiliClient` (T4)
+2. The class is wired against the typed :class:`BilibiliClient`
    for room-init, WBI-signed danmu-info, and user-info. No module-level
    ``bili_client`` global.
 3. Test seams (constructor kwargs starting with ``_``) let unit tests run
@@ -39,7 +39,7 @@ multiple upstream sockets are never opened in parallel):
   evict lower-value traffic under pressure. Drops are counted and rate-limited
   in logs so an overload cannot create a second log storm.
 
-This module owns NO message normalization — that is T12's responsibility.
+This module owns no message normalization; the room session owns that boundary.
 ``on_message`` receives the raw parsed dicts from
 ``protocol.unpack_data``.
 """

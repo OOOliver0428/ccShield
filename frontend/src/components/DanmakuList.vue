@@ -81,7 +81,7 @@ function readStoredFontSize(): DanmakuFontSize {
 }
 
 /**
- * T24 — danmaku + SC list, fully assembled.
+ * Danmaku and Super Chat list.
  *
  * Renders the live chat buffer. Each danmaku row may wear up to two
  * badges:

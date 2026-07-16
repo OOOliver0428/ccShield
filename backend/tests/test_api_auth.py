@@ -1,4 +1,4 @@
-"""TDD: tests for FastAPI auth routes + LOCAL_TOKEN middleware + host guard (T8).
+"""Tests for FastAPI auth routes, LOCAL_TOKEN middleware, and host guard.
 
 Contract under test:
 
@@ -823,7 +823,7 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
         "app.api.auth_routes.save_cookies_manual", fake_save_cookies_manual
     )
 
-    # Bug 2 / F3 — /spi fallback in the route. The pre-existing test was
+    # /spi fallback in the route. The existing test was
     # written before the route fetched buvid3 from /spi; the contract
     # being pinned here is the COMBINED behaviour "user omitted buvid3
     # AND /spi returned nothing → leave the in-memory value alone", so
@@ -870,7 +870,7 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
 
 
 # ---------------------------------------------------------------------------
-# Bug 1 / F3: auth_routes._ENV_PATH MUST equal app.config._ENV_FILE so the
+# auth_routes._ENV_PATH must equal app.config._ENV_FILE so the
 # QR flow writes to the SAME .env the config loader reads on startup.
 # Before the fix, auth_routes computed _PROJECT_ROOT from one extra hop,
 # so write_env_atomic wrote to backend/.env while config.py read
@@ -880,7 +880,7 @@ def test_manual_success_flips_auth_status_even_when_buvid3_omitted(
 
 
 def test_env_path_matches_config_env_file_single_source_of_truth() -> None:
-    """Bug 1 regression: auth_routes._ENV_PATH is the SAME Path object as
+    """auth_routes._ENV_PATH is the same Path object as
     app.config._ENV_FILE. A future refactor that re-introduces a divergent
     computation (4 parents instead of 3) breaks this test immediately.
     """
@@ -901,7 +901,7 @@ def test_qr_poll_success_passes_buvid3_from_spi_to_write_env_and_state_refresh(
     tmp_path: Path,
     mock_auth_session: MagicMock,
 ) -> None:
-    """Bug 2 / F3 regression: successful QR poll must fetch buvid3 via
+    """Successful QR poll must fetch buvid3 via
     /x/frontend/finger/spi and thread it through BOTH
     write_env_atomic AND mark_authenticated_after_login. Without buvid3 the
     /xlive/getDanmuInfo WBI call fails (need device fingerprint).

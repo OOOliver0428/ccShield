@@ -39,7 +39,7 @@ def test_expired_runtime_cleanup_stops_the_active_room(
 
 
 # ---------------------------------------------------------------------------
-# Bug 1 / F3: one-time .env migration on startup. Earlier releases wrote
+# One-time .env migration on startup. Earlier releases wrote
 # cookies to backend/.env (one level short of the project root), and
 # config.py reads <repo>/.env. The fix is to migrate any pre-existing
 # backend/.env into <repo>/.env the first time the new build boots, so

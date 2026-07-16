@@ -6,12 +6,12 @@
 # checks. Headless: no TTY, no interactive prompts, no orphaned processes.
 #
 # Env overrides:
-#   RECCSHIELD_GEN_PORT  default 8000 — port to bind. Override when the
+#   CCSHIELD_GEN_PORT  default 8000 — port to bind. Override when the
 #                         developer already has the backend running on
 #                         :8000 (this script REFUSES to kill a stranger's
 #                         process to avoid disrupting dev flow).
-#   RECCSHIELD_GEN_HOST  default 127.0.0.1 — bind host.
-#   RECCSHIELD_GEN_WAIT  default 60 (≈30s) — max poll iterations at 0.5s.
+#   CCSHIELD_GEN_HOST  default 127.0.0.1 — bind host.
+#   CCSHIELD_GEN_WAIT  default 60 (≈30s) — max poll iterations at 0.5s.
 #
 # Exit codes:
 #   0   schema fetched, validated, and written
@@ -22,16 +22,16 @@
 #
 # Examples:
 #   bash scripts/gen_schema.sh
-#   RECCSHIELD_GEN_PORT=8766 bash scripts/gen_schema.sh
+#   CCSHIELD_GEN_PORT=8766 bash scripts/gen_schema.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-PORT="${RECCSHIELD_GEN_PORT:-8000}"
-HOST="${RECCSHIELD_GEN_HOST:-127.0.0.1}"
-WAIT_MAX="${RECCSHIELD_GEN_WAIT:-60}"   # 60 * 0.5s ≈ 30s
+PORT="${CCSHIELD_GEN_PORT:-8000}"
+HOST="${CCSHIELD_GEN_HOST:-127.0.0.1}"
+WAIT_MAX="${CCSHIELD_GEN_WAIT:-60}"   # 60 * 0.5s ≈ 30s
 OUT_FILE="$REPO_ROOT/frontend/openapi.json"
 
 LOG_FILE="$(mktemp -t gen_schema.XXXXXX.log)"
@@ -71,11 +71,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Refuse to bind if a process already owns the port — never kill a
-# stranger. CI sets RECCSHIELD_GEN_PORT to a unique value via the job.
+# stranger. CI sets CCSHIELD_GEN_PORT to a unique value via the job.
 if (exec 3<>"/dev/tcp/$HOST/$PORT") 2>/dev/null; then
   exec 3<&- 3>&-
   echo "gen_schema: $HOST:$PORT is already in use." >&2
-  echo "  Stop the listener, or run: RECCSHIELD_GEN_PORT=<free> bash scripts/gen_schema.sh" >&2
+  echo "  Stop the listener, or run: CCSHIELD_GEN_PORT=<free> bash scripts/gen_schema.sh" >&2
   exit 3
 fi
 

@@ -4,7 +4,7 @@ The app factory wires together:
 
 - the CORS middleware (allow-list from :data:`app.config.settings.cors_origins`),
 - the LOCAL_TOKEN + Host-guard middleware from :mod:`app.api.middleware`,
-- the top-level ``/api`` router (auth today; T13 adds room routes),
+- the top-level ``/api`` router,
 - a lifespan that (a) calls ``auth_session.check_on_startup()`` so the
   singleton reflects the on-disk cookies before the first request and
   (b) creates the shared ``httpx.AsyncClient`` used by the B站
@@ -13,7 +13,7 @@ The app factory wires together:
 ``create_app()`` is the only thing :func:`app.main:app` (and every
 test) calls; it must remain idempotent so a second ``create_app()`` in
 the same process yields an independently-configured instance — that is
-how the T8 test suite builds one app per test while sharing the
+how the test suite builds one app per test while sharing the
 module-level ``auth_session`` mock.
 
 Run locally with::
@@ -49,7 +49,7 @@ from app.config import settings
 # One-time .env migration
 # ---------------------------------------------------------------------------
 #
-# Bug 1 / F3: an earlier release wrote cookies to ``backend/.env`` (one
+# An earlier release wrote cookies to ``backend/.env`` (one
 # level short of the project root) while config.py read
 # ``<repo>/.env`` — on restart the cookies were gone and the user had
 # to re-scan. On the first boot of the fixed build, lift any pre-existing
@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     session.on_expired(_stop_expired_authenticated_runtime)
     app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(15.0, connect=5.0),
-        headers={"User-Agent": "reccshield/0.1.0 (+local)"},
+        headers={"User-Agent": f"ccShield/{__version__} (+local)"},
     )
     try:
         yield
@@ -193,7 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     """Create and return a configured FastAPI application instance."""
     app = FastAPI(
-        title="reccshield backend",
+        title="ccShield backend",
         version=__version__,
         description="Bilibili live-room moderator tool — backend API.",
         lifespan=lifespan,
@@ -245,7 +245,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     logger.info(
-        "create_app: reccshield backend v{} ready (cors_origins={!r}, "
+        "create_app: ccShield backend v{} ready (cors_origins={!r}, "
         "host={!r}, port={!r})",
         __version__,
         settings.cors_origins,

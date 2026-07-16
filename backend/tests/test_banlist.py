@@ -1,4 +1,4 @@
-"""TDD tests for BanListManager (T17).
+"""Tests for BanListManager.
 
 These tests predate ``app/room/banlist.py`` and are intended to be RUN
 FIRST — the import error at collection time is the failing-first proof.
@@ -458,7 +458,7 @@ async def _noop_cb(_msg: dict[str, Any]) -> None:
 
 async def test_broadcast_isolates_subscriber_errors() -> None:
     """A subscriber that raises must NOT prevent other subscribers from
-    being invoked. This mirrors T12's broadcast error-isolation rule.
+    being invoked. This mirrors the room broadcast error-isolation rule.
     """
     client = _make_client([{"uid": 1}])
     mgr = _make_manager(client)
@@ -504,7 +504,7 @@ async def test_broadcast_isolates_subscriber_errors() -> None:
 
 async def test_fetch_snapshot_passes_is_running_callback_to_client() -> None:
     """The ``is_running`` callback is forwarded to
-    ``bili_client.get_ban_list`` so T4 can short-circuit pagination
+    ``bili_client.get_ban_list`` so the client can short-circuit pagination
     when the room is no longer active.
     """
     client = _make_client([{"uid": 1}])

@@ -14,8 +14,8 @@
 #   2  not inside a git working tree
 #
 # Why this exists:
-#   ccShield's COOKIE_AUTOBAN_SUMMARY.md:247 leaked a real SESSDATA into a
-#   committed markdown report. reccshield's capture_fixtures.py redacts
+#   A historical development artifact accidentally included a real login
+#   credential. ccShield's capture_fixtures.py redacts
 #   before writing, but a future hand-edit, copy-paste, or `--no-verify`
 #   slip could regress. This is the cheap, fast, network-free gate that
 #   catches it BEFORE the commit lands.

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * T19 — Ban controls.
+ * Ban controls.
  *
  * Inline ban-action widget: duration picker + reason input + 禁言
  * button. Plugs into the danmaku list (rendered by App.vue) so a
@@ -24,7 +24,7 @@
  * 4. On 200, optimistic addBan + emit ``success`` so the parent can
  *    close the popover / clear the danmaku row.
  *
- * No polling, no duplicate state — the WS (T18) owns authoritative
+ * No polling, no duplicate state — the WebSocket owns authoritative
  * state; this widget only initiates writes.
  */
 import { computed, ref } from "vue";

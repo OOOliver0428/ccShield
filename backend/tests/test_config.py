@@ -143,7 +143,7 @@ def test_no_dual_path_logic_in_app() -> None:
     The regex is PRECISE — it only matches the actual PyInstaller dual-path
     anti-patterns, NOT the Python stdlib ``frozenset`` type (or any other
     identifier that happens to start with ``frozen``). A false positive on
-    ``frozenset[str]`` (T8 introduced in :mod:`app.api.middleware`) would
+    ``frozenset[str]`` (introduced in :mod:`app.api.middleware`) would
     defeat the purpose of the test as a regression guard.
     """
     if not CONFIG_FILE.exists():

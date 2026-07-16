@@ -2,8 +2,8 @@
 
 Why this exists
 ---------------
-ccShield's COOKIE_AUTOBAN_SUMMARY.md:247 leaked a real SESSDATA into a
-committed markdown report. ``backend/scripts/capture_fixtures.py`` is the
+A historical development artifact accidentally included a real SESSDATA
+credential. ``backend/scripts/capture_fixtures.py`` is the
 pipeline that saves real B站 API responses for offline replay — it
 redacts every credential before writing. ``check_fixtures.py`` is the
 defensive companion that re-verifies any committed fixture actually
@@ -28,7 +28,7 @@ Exit codes
 Scope
 -----
 Scans ``backend/tests/fixtures/*.json``. Real fixtures may not exist
-yet (T9 capture is gated on a human login); an empty / missing dir
+yet (real capture is gated on a human login); an empty or missing directory
 exits 0 — that is the expected state during early development. The
 script is designed to be safe to wire into CI without false-positives
 on an empty fixtures dir.

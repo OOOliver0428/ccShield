@@ -33,7 +33,7 @@ git commit -m "build(api): regenerate client for <change>"
 Both scripts are idempotent and headless. `scripts/gen_schema.sh` exits
 non-zero if the backend fails to start or `/openapi.json` is unreachable;
 it refuses to bind a port already in use (so it will not clobber a
-running dev server — override with `RECCSHIELD_GEN_PORT=<free>`).
+running dev server — override with `CCSHIELD_GEN_PORT=<free>`).
 
 `scripts/gen_client.sh` requires `@hey-api/openapi-ts`, declared as a
 frontend devDependency (so CI's `bun install --frozen-lockfile` resolves
@@ -43,7 +43,7 @@ it deterministically).
 
 The generated `client()` function and `sdk.gen.ts` operations are the
 intended replacement for `frontend/src/api/client.ts` once the MVP is
-out of the way. Migration plan (not part of T25):
+out of the way. Future migration plan:
 
 1. Replace `httpClient.get('/auth/bootstrap')` with the generated
    `bootstrap({ ... })` operation, swapping the axios interceptor

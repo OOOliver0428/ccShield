@@ -1,4 +1,4 @@
-"""T13 — Room REST routes + normalised WebSocket bridge endpoint.
+"""Room REST routes and normalized WebSocket bridge endpoint.
 
 Mounted under ``/api`` via ``app.api.router``. Endpoints:
 

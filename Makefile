@@ -17,7 +17,7 @@ endif
 BUN ?= bun
 
 help:
-	@echo "reccshield monorepo"
+	@echo "ccShield monorepo"
 	@echo ""
 	@echo "Targets:"
 	@echo "  install   Install backend (uv) + frontend (bun) dependencies"

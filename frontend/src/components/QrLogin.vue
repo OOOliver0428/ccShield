@@ -12,8 +12,8 @@ const buvid3 = ref("");
 const manualSubmitting = ref(false);
 const manualError = ref<string | null>(null);
 
-// F3 manual-QA regression (see QrLogin.test.ts):
-// the QR card used to sit on "正在生成二维码…" forever because (a) the
+// The QR card must surface request and rendering failures independently. It
+// previously stayed on "正在生成二维码…" forever because (a) the
 // browser never called /api/auth/qr/start — no onMounted wired startQr
 // — and (b) the SPA tried to load the B站 scan-link as if it were an
 // image src. Track the request-side failure distinctly from the

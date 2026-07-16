@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "reccshield-frontend",
+      "name": "ccshield-frontend",
       "dependencies": {
         "axios": "^1.7.7",
         "dayjs": "^1.11.13",

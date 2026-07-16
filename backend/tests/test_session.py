@@ -1,4 +1,4 @@
-"""TDD tests for AuthSession state machine (app.auth.session — T7).
+"""Tests for the AuthSession state machine.
 
 - AuthState enum: AUTHENTICATED, NEEDS_LOGIN, EXPIRED.
 - AuthSession.check_on_startup()
@@ -388,7 +388,7 @@ def test_check_on_startup_no_overrides_reads_settings_defaults(
         # to pick up our override.
         from app.config import Settings
 
-        abs_env = Path("/tmp/reccshield_definitely_absent_for_test.env")
+        abs_env = Path("/tmp/ccshield_definitely_absent_for_test.env")
         if abs_env.exists():
             abs_env.unlink()
         fresh = Settings(_env_file=str(abs_env))  # pyright: ignore[reportCallIssue]
@@ -473,7 +473,7 @@ def test_mark_authenticated_after_login_refreshes_bili_client_cookies(
     try:
         from app.config import Settings
 
-        abs_env = Path("/tmp/reccshield_test_mark_login.env")
+        abs_env = Path("/tmp/ccshield_test_mark_login.env")
         if abs_env.exists():
             abs_env.unlink()
         fresh = Settings(_env_file=str(abs_env))  # pyright: ignore[reportCallIssue]
@@ -526,7 +526,7 @@ def test_mark_authenticated_after_login_returns_authenticated_when_nav_ok(
     try:
         from app.config import Settings
 
-        abs_env = Path("/tmp/reccshield_test_mark_login2.env")
+        abs_env = Path("/tmp/ccshield_test_mark_login2.env")
         if abs_env.exists():
             abs_env.unlink()
         fresh = Settings(_env_file=str(abs_env))  # pyright: ignore[reportCallIssue]

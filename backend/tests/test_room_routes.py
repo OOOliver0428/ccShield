@@ -1,4 +1,4 @@
-"""TDD tests for T13 — room routes + normalized WS bridge.
+"""Tests for room routes and the normalized WebSocket bridge.
 
 Contract under test:
 
@@ -31,7 +31,7 @@ Mock strategy:
   ``app.api.room_routes.set_room_bridge`` are the singleton seam so each
   test can pin / clear the active bridge deterministically.
 
-The ``LocalTokenMiddleware`` (T8) gates ``/api/*`` and ``/ws/*`` with
+``LocalTokenMiddleware`` gates ``/api/*`` and ``/ws/*`` with
 ``Host: localhost`` + ``Authorization: Bearer <LOCAL_TOKEN>`` for HTTP
 and ``?token=<LOCAL_TOKEN>`` for WebSockets. Tests set ``Host:
 localhost`` and the token explicitly so the guard passes.
@@ -250,7 +250,7 @@ def app() -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    """Run the app under TestClient WITH the lifespan (T8 precedent)."""
+    """Run the app under TestClient with the lifespan enabled."""
     with TestClient(app) as c:
         yield c
 

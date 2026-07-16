@@ -1,5 +1,5 @@
 /**
- * danmaku store (T14).
+ * Danmaku store.
  *
  * Holds the in-memory chat stream the UI renders. The store is a
  * dumb append target — it doesn't know about WebSockets, the bridge,

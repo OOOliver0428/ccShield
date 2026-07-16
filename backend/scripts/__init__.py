@@ -1,4 +1,4 @@
-"""reccshield backend scripts.
+"""ccShield backend scripts.
 
 Operational scripts invoked via ``python -m scripts.<name>``. Each script is
 self-contained, may import the application (``app.*``) freely, but must

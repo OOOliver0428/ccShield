@@ -106,7 +106,7 @@ export const authMeApiAuthMeGet = <ThrowOnError extends boolean = false>(options
  * :func:`save_cookies_manual` helper does the same guarantee at the
  * persistence layer.
  *
- * Bug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,
+ * If the user omitted ``buvid3`` in the request body,
  * fetch one from ``/x/frontend/finger/spi`` and thread it through to
  * both ``save_cookies_manual`` and ``mark_authenticated_after_login``.
  * If the user did provide a buvid3 we trust it verbatim (it's the

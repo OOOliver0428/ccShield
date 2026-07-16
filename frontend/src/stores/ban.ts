@@ -1,10 +1,9 @@
 /**
- * Ban store (T19).
+ * Ban store.
  *
  * Holds the live ban list for the currently connected room. The store
- * is the single source of truth for the ban panel — it does NOT poll
- * the backend (T18 explicitly forbids that anti-pattern; ccShield's
- * app.js:437-465 did it and duplicated moderation state). All writes
+ * is the single source of truth for the ban panel — it does not poll
+ * the backend because polling would duplicate moderation state. All writes
  * come from the banlist WebSocket (``BanlistWS``) or from local user
  * actions (ban / unban).
  *

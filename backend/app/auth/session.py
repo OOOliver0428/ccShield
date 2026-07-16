@@ -88,7 +88,7 @@ def _load_cookie_settings() -> tuple[str, str]:
     as ``NEEDS_LOGIN``, not a 500.
     """
     try:
-        from app.config import settings  # lazy: T2 owns config.py
+        from app.config import settings  # lazy to avoid import cycles
     except ImportError:
         return "", ""
     try:
@@ -254,8 +254,7 @@ class AuthSession:
         # we push the freshly-captured cookies in. Without this refresh
         # ``/nav`` still sees an empty jar, returns ``-101``, and the
         # state machine lands in EXPIRED even though the user just
-        # successfully logged in. See a.log for the runtime-confirmed
-        # symptom.
+        # successfully logged in.
         update_cookies = getattr(self._bili_client, "update_cookies", None)
         if callable(update_cookies):
             update_cookies(dict(settings.cookies))
@@ -360,7 +359,7 @@ def _build_singleton() -> AuthSession:
 
     Keeping the import inside a function (rather than at module top) means
     :mod:`app.auth.session` stays importable while the Bili client module
-    is mid-flight during parallel T2/T4 work. We construct the singleton
+    is mid-flight during application startup. We construct the singleton
     immediately so ``from app.auth.session import auth_session`` yields a
     ready-to-use object — but the underlying ``httpx.AsyncClient`` is not
     connected until first request, so this is safe.

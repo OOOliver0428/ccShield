@@ -1,4 +1,4 @@
-# Smoke test (Wave 2 / F3 gate)
+# 冒烟测试
 
 Manual end-to-end check that the tool is actually usable: QR login, real
 danmaku, real SC/guard/medal data, manual ban + WS-push, manual unban.

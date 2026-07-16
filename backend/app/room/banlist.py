@@ -1,8 +1,8 @@
-"""Ban-list manager (T17) — WS-driven state + backend reconcile.
+"""Ban-list manager — WebSocket-driven state plus backend reconciliation.
 
-This module owns the live-room ban-list state for reccshield. The
+This module owns the live-room ban-list state for ccShield. The
 :class:`BanListManager` is the source of truth for the current ban
-state; subscribers (T18's WS route) receive push notifications shaped
+state; subscribers on the ban-list WebSocket route receive push notifications shaped
 as one of three wire messages:
 
 * ``{"event": "snapshot",  "bans": [...]}`` — full state on (re)connect.
@@ -16,7 +16,7 @@ ccShield polled the B站 ban-list every few seconds per room
 (``LOG_ANALYSIS_FINAL.md``). That generated a request storm against
 the API, and any ban the operator performed via the B站 web UI was
 already stale by the time the next poll fired. We REPLACE polling with
-WS push (T18 wires the bridge) plus a backend **60-second reconcile**
+WebSocket push plus a backend **60-second reconcile**
 that re-fetches ``get_ban_list`` and emits deltas — this catches
 out-of-band bans that never crossed our WS path (e.g. an admin on the
 B站 dashboard).
@@ -26,8 +26,8 @@ Single active room
 
 ``start(room_id)`` brings the manager up for ONE room. Calling
 ``start`` again or for a different room is not supported in this
-layer — T16 owns room lifecycle via the local-token WS, and the
-caller (T18) is expected to ``stop()`` before re-using the manager.
+layer; room lifecycle is owned by the local-token WebSocket, and the
+caller is expected to ``stop()`` before re-using the manager.
 The module-level singleton (``banlist_manager``) is the canonical
 handle for the currently active room.
 
@@ -264,7 +264,7 @@ class BanListManager:
 
     Lifecycle:
 
-    * :meth:`start` fetches the initial snapshot via T4's
+    * :meth:`start` fetches the initial snapshot via the client's
       ``get_ban_list`` (which paginates internally and consults
       ``is_running`` per page), populates ``_bans``, broadcasts the
       snapshot to all current subscribers, and starts the background
@@ -275,7 +275,7 @@ class BanListManager:
       current snapshot to that callback (a late WS connect needs the
       full state to bootstrap its UI).
     * :meth:`unsubscribe` removes a callback if registered.
-    * :meth:`on_ban` / :meth:`on_unban` are called by the T18 bridge
+    * :meth:`on_ban` / :meth:`on_unban` are called by the ban-list bridge
       after a ban / unban succeeds via the local API — they update
       local state and broadcast a single delta.
     * :meth:`_reconcile` runs every ``_reconcile_interval`` seconds,
@@ -307,7 +307,7 @@ class BanListManager:
         # Background reconcile task (None when not running).
         self._reconcile_task: asyncio.Task[None] | None = None
 
-        # Active room + state-check callback (T4's get_ban_list polls
+        # Active room plus state-check callback (get_ban_list polls
         # this per page so it can short-circuit when the room is gone).
         self._room_id: int | None = None
         self._is_running: Callable[[], bool] | None = None
@@ -323,7 +323,7 @@ class BanListManager:
     ) -> None:
         """Set up state for ``room_id`` and start the reconcile task.
 
-        Fetches the initial snapshot (paginated via T4's
+        Fetches the initial snapshot (paginated via the client's
         ``get_ban_list``, which consults ``is_running`` per page),
         populates ``_bans``, and broadcasts the snapshot to every
         currently-registered subscriber.
@@ -391,7 +391,7 @@ class BanListManager:
                 self._subscribers.remove(cb)
 
     # ------------------------------------------------------------------
-    # Delta events (called by T18 bridge after a successful ban / unban)
+    # Delta events (called by the ban-list bridge after a successful ban / unban)
     # ------------------------------------------------------------------
 
     async def on_ban(
@@ -399,7 +399,7 @@ class BanListManager:
     ) -> None:
         """Insert ``uid`` into local state and broadcast ``ban_added``.
 
-        Called by the T18 bridge right after ``bili_client.ban_user``
+        Called by the ban-list bridge right after ``bili_client.ban_user``
         returns success — the local API is the source of truth for
         this delta, so reconcile does not need to re-fetch to confirm.
         """
@@ -520,7 +520,7 @@ class BanListManager:
         """Snapshot subscribers (under lock), await each (errors logged).
 
         A raising subscriber MUST NOT prevent the others from being
-        invoked (mirrors T12's broadcast error-isolation rule).
+        invoked (mirrors the room broadcast error-isolation rule).
         """
         async with self._subscribers_lock:
             snapshot = list(self._subscribers)
@@ -546,9 +546,9 @@ class BanListManager:
             )
 
     async def _fetch_snapshot(self) -> list[BanEntry]:
-        """Call ``bili_client.get_ban_list`` (T4 owns pagination).
+        """Call ``bili_client.get_ban_list`` (the client owns pagination).
 
-        ``is_running`` is forwarded so T4 can short-circuit pagination
+        ``is_running`` is forwarded so the client can short-circuit pagination
         if the room is no longer active. Returns ``[]`` if the manager
         has no active room (defensive — should not happen in practice).
         """

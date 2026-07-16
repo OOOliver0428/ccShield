@@ -16,12 +16,13 @@ import ConnectionBanner from "./components/ConnectionBanner.vue";
 import BanList from "./components/BanList.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 import QuickRooms from "./components/QuickRooms.vue";
+import ProjectFooter from "./components/ProjectFooter.vue";
+import { seedDemoWorkspace } from "./demo/seedDemoWorkspace";
 
 /**
- * T14 + T19 — top-level shell.
+ * Top-level application shell.
  *
- * Wires the auth flow (T10) to the room lifecycle (T14) and the
- * ban-list WS bridge (T19):
+ * Wires the auth flow to the room lifecycle and the ban-list WebSocket bridge:
  *
  * 1. On mount, bootstrap the local token + fetch auth status.
  * 2. While ``auth.status !== 'authenticated'``, render the QR login.
@@ -34,7 +35,7 @@ import QuickRooms from "./components/QuickRooms.vue";
  * 5. The ConnectionBanner is shown whenever the bridge WS is
  *    disconnected or actively retrying — driven by ``wsVisible`` ref.
  *
- * T19 (ban) notes:
+ * Ban-list notes:
  *
  * * The ban store is owned by the WS — we never poll. Every
  *   snapshot / ban_added / ban_removed delta is dispatched into
@@ -46,14 +47,8 @@ import QuickRooms from "./components/QuickRooms.vue";
  *   it lives inline per danmaku row (the hover/popover wiring is
  *   owned by App.vue but rendered by a per-row slot on DanmakuList).
  *
- * Bug B regression (a.log): QrLogin's onMounted called
- * ``auth.startQr()`` while ``auth.status === 'loading'``, racing the
- * parent's ``await bootstrap(); await auth.fetchStatus();`` chain.
- * The POST went out without the LOCAL_TOKEN bearer header → 401 +
- * visible "生成二维码失败" error. We now gate QrLogin's mount on
- * ``status !== 'loading'`` so it cannot call startQr until bootstrap
- * has set the token, and render a "加载中…" placeholder during the
- * loading window.
+ * QrLogin is gated behind ``status !== 'loading'`` so its mount hook cannot
+ * race bootstrap and issue a request before the local bearer token is ready.
  */
 const auth = useAuthStore();
 const room = useRoomStore();
@@ -68,16 +63,18 @@ const userInitial = computed(() =>
 );
 let bridge: BridgeWS | null = null;
 let banWs: BanlistWS | null = null;
+const isDemoMode = import.meta.env.DEV
+  && new URLSearchParams(window.location.search).get("demo") === "1";
 
 onMounted(async () => {
+  if (isDemoMode) {
+    seedDemoWorkspace(auth, room, danmaku, ban);
+    return;
+  }
   await bootstrap();
   await auth.fetchStatus();
-  // F3 / Bug 5: the QR path never calls loginManual (which is the only
-  // place userInfo was being set). On page-reload while already authed
-  // we also have nothing in userInfo — so populate it from /auth/me
-  // whenever the backend says we're authenticated. 401 is ignored
-  // (user is logged out; userInfo stays null and the UI falls back to
-  // "用户").
+  // QR login and a restored session do not pass through loginManual, so load
+  // the display identity whenever the backend confirms authentication.
   if (auth.status === "authenticated") {
     try {
       await auth.fetchMe();
@@ -87,19 +84,13 @@ onMounted(async () => {
   }
 });
 
-// F3 / Bug 3: after QR login completes, `auth.status` flips from
-// "needs_login" to "authenticated" via pollOnce→fetchStatus. The
-// onMounted fetchMe above does NOT fire on that transition (App.vue
-// was already mounted, so onMounted never runs again) — without this
-// watcher, the welcome banner rendered the "用户" placeholder even
-// though the user just successfully logged in. Watching auth.status
-// and calling fetchMe on every transition to "authenticated" covers
-// BOTH the initial-load case (handled redundantly by the onMounted
-// block above) and the post-QR-success case (only this watcher).
+// The status watcher also covers the transition after QR confirmation, when
+// App.vue is already mounted and the initial fetchMe branch will not rerun.
 const onAuthStatusChange = (
   s: AuthStatus,
   previous?: AuthStatus,
 ): void => {
+  if (isDemoMode) return;
   if (s === "authenticated") {
     void auth.fetchMe().catch(() => {
       // Logged out between status transition and fetchMe — leave userInfo
@@ -120,6 +111,7 @@ const onAuthStatusChange = (
 watch(() => auth.status, onAuthStatusChange);
 
 watch([currentRoomId, roomStatus], ([newId, newStatus], [oldId]) => {
+  if (isDemoMode) return;
   if (newId === null) {
     // Disconnected — close both WSs, drop banner, clear stores.
     bridge?.close();
@@ -210,6 +202,7 @@ function handleBridgeEvent(event: BridgeEvent): void {
       </div>
       <QrLogin />
       <p class="login-footnote">本地运行 · 登录凭据仅保存在你的设备</p>
+      <ProjectFooter class="login-project-footer" />
     </section>
     <section v-else class="authenticated-shell" data-testid="authenticated-shell">
       <header class="topbar">
@@ -242,7 +235,7 @@ function handleBridgeEvent(event: BridgeEvent): void {
 
       <div class="console-content">
         <RoomInput />
-        <QuickRooms />
+        <QuickRooms :demo-mode="isDemoMode" />
         <ConnectionBanner :visible="wsVisible" />
         <section
           v-if="room.status === 'connected'"
@@ -263,6 +256,7 @@ function handleBridgeEvent(event: BridgeEvent): void {
           </div>
         </section>
       </div>
+      <ProjectFooter class="workspace-project-footer" />
     </section>
   </main>
 </template>
@@ -347,10 +341,16 @@ function handleBridgeEvent(event: BridgeEvent): void {
   color: var(--cc-text-muted);
   font-size: 11px;
 }
+.login-project-footer {
+  margin-top: -5px;
+}
 .authenticated-shell {
   width: 100%;
   max-width: 1580px;
   margin: 0 auto;
+}
+.workspace-project-footer {
+  margin-top: 5px;
 }
 .topbar {
   display: flex;

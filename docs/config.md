@@ -41,11 +41,11 @@ Anything else in `.env` is ignored (`extra="ignore"`).
 
 - **PyInstaller / frozen dual-path.** The original ccShield config
   walked four candidate `.env` paths so a bundled executable could find
-  one. reccshield ships as a runnable Python process (`uv run`), so the
+  one. ccShield currently ships as a runnable Python process (`uv run`), so the
   candidate-path logic is gone. Adding it back later (if/when there's a
   real reason to) is the only deprecation I expect on this file. Don't
   add a `sys.frozen` branch preemptively.
-- **Per-user config in `~/.config/reccshield`.** Not needed for single
+- **Per-user config in `~/.config/ccshield`.** Not needed for single
   user. Same answer as above: don't add it preemptively.
 - **`.env.local`, `.env.production`, Next-style overlays.** One file,
   one environment. Keep it boring.

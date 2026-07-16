@@ -45,12 +45,7 @@ jobs:
       - name: Basedpyright type check
         run: uv run basedpyright
 
-      # NOTE: -m "not live" future-proofs CI once @pytest.mark.live tests are
-      # added (T26-style integration tests against a real Bilibili Cookie).
-      # Today no `live` marker is registered in pyproject.toml, and addopts
-      # includes --strict-markers — this -m expression will therefore error
-      # until the marker is registered. Tracking: leave as-is to gate CI on
-      # the marker being properly declared.
+      # Real-cookie integration tests carry the `live` marker and never run in CI.
       - name: Pytest (exclude live tests)
         run: uv run pytest -m "not live" -v --junitxml=pytest-results.xml
 
@@ -113,13 +108,12 @@ jobs:
           retention-days: 7
 
   secrets-scan:
-    name: secrets scan (T26)
+    name: secrets scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # T26 deliverable. Script lives at scripts/check_secrets.sh.
       # Must exit 0 on a clean tree; non-zero blocks this job.
       - name: Run secrets scan
         run: bash scripts/check_secrets.sh
@@ -129,7 +123,7 @@ jobs:
   # will leave frontend/openapi.json or frontend/src/api/generated/ stale
   # vs HEAD, failing this job.
   openapi-stale:
-    name: openapi-stale (T25)
+    name: openapi stale check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -163,7 +157,7 @@ jobs:
       # non-default port to stay safe on shared self-hosted runners.
       - name: Fetch backend OpenAPI schema
         env:
-          RECCSHIELD_GEN_PORT: "8765"
+          CCSHIELD_GEN_PORT: "8765"
         run: bash scripts/gen_schema.sh
 
       - name: Regenerate TS client from committed schema

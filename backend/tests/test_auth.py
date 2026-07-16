@@ -182,7 +182,7 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
 
 
 # ---------------------------------------------------------------------------
-# qr_poll — Bug A regression: B站 no longer returns data.url, cookies live
+# B站 no longer returns data.url during QR polling; cookies live
 # in the Set-Cookie response header ONLY. The current B站 poll success
 # shape is ``{code: 0, data: {refresh_token: ...}}`` with SESSDATA /
 # bili_jct / DedeUserID arriving as Set-Cookie on the response. The poll
@@ -192,7 +192,7 @@ def test_qr_poll_success_captures_cookies_from_url_query_params() -> None:
 
 
 def test_qr_poll_success_captures_cookies_from_set_cookie_when_url_missing() -> None:
-    """Bug A core scenario (from a.log): Set-Cookie carries all three
+    """Set-Cookie carries all three
     cookies, ``data.url`` is absent. Must return a success dict.
 
     Inner B站 data.code == 0 → success; cookies come from Set-Cookie."""
@@ -423,7 +423,7 @@ def test_qr_poll_raises_qr_expired_on_inner_code_86038() -> None:
 def test_qr_poll_raises_qr_awaiting_scan_on_inner_code_86101() -> None:
     """inner_code 86101 = not scanned yet — root-cause regression for the
     bug where the top-level code (always 0) was being read and the QR
-    states never matched. See a.log curl proof."""
+    states never matched."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -751,7 +751,7 @@ def test_save_cookies_manual_raises_login_incomplete_when_nav_data_missing(
 
 
 # ---------------------------------------------------------------------------
-# fetch_buvid3 — Bug 2 / F3: capture device fingerprint from
+# fetch_buvid3 captures the device fingerprint from
 # /x/frontend/finger/spi (B站 doesn't Set-Cookie buvid3 on QR login)
 # ---------------------------------------------------------------------------
 

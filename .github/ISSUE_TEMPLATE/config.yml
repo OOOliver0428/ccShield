@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全问题
+    url: https://github.com/OOOliver0428/ccShield/security/policy
+    about: 请不要在公开 Issue 中披露 Cookie、账号信息或安全漏洞细节。

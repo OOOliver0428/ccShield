@@ -1,8 +1,8 @@
-"""TDD tests for RoomSession (T12) + typed BridgeEvent schema (T12).
+"""Tests for RoomSession and the typed BridgeEvent schema.
 
 These tests predate ``app/room/`` and are intended to be RUN FIRST — the
 import errors at collection time, and once the module is implemented
-each test exercises a single invariant. No real network: the T11
+each test exercises a single invariant. No real network: the danmaku
 ``DanmakuClient`` is patched at the session module level with a
 ``FakeDanmakuClient`` that records ``start``/``stop`` calls.
 

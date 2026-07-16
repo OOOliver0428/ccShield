@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * T19 — Ban list panel.
+ * Ban-list panel.
  *
  * Renders every entry currently in :class:`useBanStore`. The panel
  * is purely WS-driven: nothing in here ever polls the backend.

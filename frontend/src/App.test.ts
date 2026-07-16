@@ -1,5 +1,5 @@
 /**
- * App.vue tests — T19 ban-WS lifecycle additions.
+ * App.vue tests for the ban-list WebSocket lifecycle.
  *
  * Verifies that on room-connect App.vue opens a second WS against
  * ``/api/ws/rooms/{roomId}/banlist`` (in addition to the bridge WS),
@@ -79,7 +79,7 @@ function installFakeWebSocket(): void {
   vi.stubGlobal("WebSocket", FakeWS as unknown as typeof WebSocket);
 }
 
-describe("App.vue — ban-WS lifecycle (T19)", () => {
+describe("App.vue — ban-list WebSocket lifecycle", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     installFakeWebSocket();
@@ -398,7 +398,7 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     wrapper.unmount();
   });
 
-  // F3 / Bug 5 regression — on initial mount, App.vue must populate
+  // On initial mount, App.vue must populate
   // userInfo via /api/auth/me after fetchStatus confirms authenticated.
   // Without this the welcome banner shows "用户" instead of the real name.
   //
@@ -435,7 +435,7 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     expect(text).not.toMatch(/欢迎,\s*用户/);
   });
 
-  // F3 / Bug 3 regression — after QR login completes, `auth.status` flips
+  // After QR login completes, `auth.status` flips
   // from "needs_login" to "authenticated" via pollOnce→fetchStatus. The
   // previous onMounted-only fetchMe call did NOT fire (App was already
   // mounted; no watcher triggered). The welcome banner then rendered the
@@ -484,9 +484,46 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
     expect(text).toContain("4242");
   });
 
+  it("shows the MIT project attribution in the authenticated workspace", async () => {
+    const auth = useAuthStore();
+    auth.status = "authenticated";
+    auth.token = "local-tok";
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const footer = wrapper.find('[data-testid="project-footer"]');
+    expect(footer.exists()).toBe(true);
+    expect(footer.text()).toContain("MIT License");
+    expect(footer.text()).toContain("OOOliver0428");
+  });
+
+  it("shows the MIT project attribution on the QR login page", async () => {
+    server.use(
+      http.get("*/api/auth/status", () =>
+        HttpResponse.json({ state: "needs_login" }),
+      ),
+      http.post("*/api/auth/qr/start", () =>
+        HttpResponse.json({
+          qrcode_url: "https://passport.bilibili.com/qr-test",
+          qrcode_key: "k",
+        }),
+      ),
+    );
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.findComponent(QrLogin).exists()).toBe(true);
+    const footer = wrapper.find('[data-testid="project-footer"]');
+    expect(footer.exists()).toBe(true);
+    expect(footer.text()).toContain("MIT License");
+    expect(footer.text()).toContain("GitHub");
+  });
+
   // -----------------------------------------------------------------------
-  // Bug B regression — the 401 race on first load. a.log showed:
-  //   POST /api/auth/qr/start 401  ← fires before bootstrap sets the token
+  // Regression coverage for the first-load 401 race: QrLogin must not mount
+  // before bootstrap supplies the local bearer token.
   //   GET  /api/auth/bootstrap 200
   //   GET  /api/auth/status     200
   // Root cause: QrLogin's onMounted ran startQr while auth.status was still
@@ -496,7 +533,7 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
   // startQr until bootstrap has set the token, and render an explicit
   // "加载中…" placeholder during the loading state.
   // -----------------------------------------------------------------------
-  it("Bug B: while auth.status === 'loading' QrLogin is not mounted and the loading placeholder is shown", async () => {
+  it("does not mount QrLogin while auth status is loading", async () => {
     let startCalls = 0;
     let release!: () => void;
     const ready = new Promise<void>((r) => {

@@ -7,8 +7,8 @@ using the operator's own session cookies, captures each response, and
 
 Why redaction matters
 ---------------------
-ccShield's COOKIE_AUTOBAN_SUMMARY.md:247 leaked a real SESSDATA into a
-markdown report. This script MUST NOT do the same. Every value whose key
+A historical development artifact accidentally included a real SESSDATA
+credential. This script MUST NOT do the same. Every value whose key
 matches a sensitive pattern is replaced with ``"<REDACTED>"``; every
 ``Set-Cookie`` header is dropped; the entire cookie jar is emptied. The
 self-test in ``--dry-run`` validates that no real-looking secret survives
@@ -26,7 +26,7 @@ Modes
 ``--live``:
     Real capture. Reads cookies from the project-root ``.env`` (via
     ``app.config.settings``); exits 0 with a friendly message if the
-    cookies are empty so the Wave 2 real-QR gate is a single, no-op
+    cookies are empty so the optional real-QR check is a single, no-op
     command until a human has logged in. With cookies present, hits:
 
         - ``/x/web-interface/nav``           via ``BilibiliClient.get_user_info``
@@ -353,7 +353,7 @@ def dry_run(out_dir: Path) -> int:
     ``tests/fixtures/`` directory is never polluted by synthetic data.
     Cleans up the temp dir on exit (success or failure).
     """
-    tmp = Path(tempfile.mkdtemp(prefix="reccshield_capture_dryrun_"))
+    tmp = Path(tempfile.mkdtemp(prefix="ccshield_capture_dryrun_"))
     try:
         nav_path = save_fixture(
             endpoint=ENDPOINT_NAV,

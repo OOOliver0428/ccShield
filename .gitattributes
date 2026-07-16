@@ -1,0 +1,37 @@
+* text=auto
+
+# Executable scripts must retain the platform-specific line endings expected
+# by their launch environment.
+*.sh text eol=lf
+*.command text eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Source and documentation are stored as UTF-8 text with LF in Git.
+*.py text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.svg text eol=lf
+Makefile text eol=lf
+LICENSE text eol=lf
+.env.example text eol=lf
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+# Binary brand assets must never be normalized as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.zip binary

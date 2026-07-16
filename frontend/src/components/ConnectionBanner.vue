@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 /**
- * T14 — reconnection banner.
+ * Reconnection banner.
  *
  * Pure presentational component: shows when the WS is either
  * disconnected or actively retrying. Driven by a single boolean

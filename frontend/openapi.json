@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "reccshield backend",
+    "title": "ccShield backend",
     "description": "Bilibili live-room moderator tool — backend API.",
     "version": "2.0.4"
   },
@@ -143,7 +143,7 @@
           "auth"
         ],
         "summary": "Save user-pasted cookies (Plan B fallback)",
-        "description": "Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.\n\nOn :class:`LoginIncompleteError` (the pasted cookies fail the\n``/nav`` validation or the response is malformed) we surface\nHTTP 400. The caller's existing ``.env`` is left untouched — the\n:func:`save_cookies_manual` helper does the same guarantee at the\npersistence layer.\n\nBug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,\nfetch one from ``/x/frontend/finger/spi`` and thread it through to\nboth ``save_cookies_manual`` and ``mark_authenticated_after_login``.\nIf the user did provide a buvid3 we trust it verbatim (it's the\ncookie they extracted from a real browser session, which is what\nB站 actually expects). fetch_buvid3 is best-effort and never raises.",
+        "description": "Validate pasted SESSDATA / bili_jct / buvid3 and persist on success.\n\nOn :class:`LoginIncompleteError` (the pasted cookies fail the\n``/nav`` validation or the response is malformed) we surface\nHTTP 400. The caller's existing ``.env`` is left untouched — the\n:func:`save_cookies_manual` helper does the same guarantee at the\npersistence layer.\n\nIf the user omitted ``buvid3`` in the request body,\nfetch one from ``/x/frontend/finger/spi`` and thread it through to\nboth ``save_cookies_manual`` and ``mark_authenticated_after_login``.\nIf the user did provide a buvid3 we trust it verbatim (it's the\ncookie they extracted from a real browser session, which is what\nB站 actually expects). fetch_buvid3 is best-effort and never raises.",
         "operationId": "manual_cookies_api_auth_manual_post",
         "requestBody": {
           "content": {

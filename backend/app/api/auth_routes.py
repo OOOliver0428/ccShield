@@ -65,8 +65,8 @@ from app.config import _ENV_FILE, settings
 # Module-level paths and dependencies
 # ---------------------------------------------------------------------------
 
-# Bug 1 / F3 fix: re-export ``_ENV_FILE`` from ``app.config`` as the
-# single source of truth for the .env path. Previous code computed
+# Re-export ``_ENV_FILE`` from ``app.config`` as the single source of truth
+# for the .env path. Previous code computed
 # ``_PROJECT_ROOT`` from one extra hop (3 parents from auth_routes.py =
 # ``backend/``), so write_env_atomic wrote to ``backend/.env`` while
 # config.py read ``<repo>/.env`` → on restart the cookies were gone and
@@ -271,7 +271,7 @@ async def qr_poll_route(
     # success path: persist cookies and refresh the in-memory auth state.
     sessdata: str = payload["sessdata"]
     bili_jct: str = payload["bili_jct"]
-    # Bug 2 / F3 fix: B站's QR-login flow does NOT Set-Cookie buvid3
+    # B站's QR-login flow does not set the buvid3 device fingerprint cookie.
     # (device fingerprint). We capture one from /x/frontend/finger/spi
     # so the freshly-persisted .env carries a buvid3 for WBI-signed
     # endpoints (e.g. /xlive/getDanmuInfo). fetch_buvid3 is best-effort
@@ -395,7 +395,7 @@ async def manual_cookies(
     :func:`save_cookies_manual` helper does the same guarantee at the
     persistence layer.
 
-    Bug 2 / F3 fix: if the user omitted ``buvid3`` in the request body,
+    If the user omitted ``buvid3`` in the request body,
     fetch one from ``/x/frontend/finger/spi`` and thread it through to
     both ``save_cookies_manual`` and ``mark_authenticated_after_login``.
     If the user did provide a buvid3 we trust it verbatim (it's the

@@ -1,5 +1,5 @@
 /**
- * BanlistWS — frontend WebSocket client for the T18 ban-list bridge.
+ * BanlistWS — frontend WebSocket client for the ban-list bridge.
  *
  * Connects to ``/api/ws/rooms/{room_id}/banlist?token=<local_token>``
  * and dispatches every push (``snapshot`` / ``ban_added`` /
@@ -7,15 +7,14 @@
  * transport layer never touches the UI; the UI only ever reads from
  * the store.
  *
- * Why this is NOT polling (T18 anti-pattern guard): ccShield's
- * ``app.js:437-465`` polled ``GET /api/ban-list/{room_id}`` every
- * 2–3s and re-applied the result. That caused out-of-order updates
+ * Why this is not polling: polling ``GET /api/ban-list/{room_id}`` every
+ * 2–3s and re-applying the result would cause out-of-order updates
  * (bans the operator just issued showed up one tick late), wasted
  * CPU, and—worst—duplicated moderation state across tabs. We do
  * exactly the opposite: one WS per room, server pushes deltas, store
  * is the single source of truth.
  *
- * Reconnect policy mirrors :class:`BridgeWS` (T14): 3s → 6s → 12s →
+ * Reconnect policy mirrors :class:`BridgeWS`: 3s → 6s → 12s →
  * 24s → 30s cap, max 5 attempts, counter resets on a successful open,
  * ``close()`` is the kill switch that cancels pending retries.
  */

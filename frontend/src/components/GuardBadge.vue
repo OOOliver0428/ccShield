@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * T21 — fleet guard badge.
+ * Fleet guard badge.
  *
  * Bilibili's three fleet tiers surface as guard_level 1/2/3 in the
  * bridge ``DanmakuEvent``. Anything else (0 = none, >3 = unknown /

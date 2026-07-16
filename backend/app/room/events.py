@@ -1,4 +1,4 @@
-"""Typed BridgeEvent schema (T12).
+"""Typed BridgeEvent schema.
 
 The Bili live-WS protocol hands us raw cmd/info dicts (see
 :mod:`app.bilibili.protocol`). For the rest of the app (FastAPI
@@ -9,7 +9,7 @@ Why type them up?
 
 * Frontend never has to know about B站 cmd/info. A websocket client can
   switch on ``BridgeEvent.type`` and trust the field names.
-* Renaming a B站 field in T11 stays contained: a single normalize step
+* Renaming a B站 wire field stays contained in a single normalization step
   lives in :mod:`app.room.session`.
 * Pydantic v2 gives us free validation + JSON serialization for the
   WS payload.

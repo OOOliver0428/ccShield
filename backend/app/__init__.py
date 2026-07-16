@@ -1,3 +1,3 @@
-"""reccshield backend application package."""
+"""ccShield backend application package."""
 
 __version__ = "2.0.4"

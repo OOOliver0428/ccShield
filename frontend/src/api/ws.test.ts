@@ -1,5 +1,5 @@
 /**
- * BridgeWS tests (T14).
+ * BridgeWS tests.
  *
  * WebSocket is not provided by jsdom, so we stub it globally with a
  * deterministic fake whose lifecycle is driven by the test (no real
@@ -273,7 +273,7 @@ describe("BridgeWS", () => {
     ws.close();
   });
 
-  // F3 / Bug 4 regression — Intentional close() must NOT fire onDisconnect
+  // An intentional close() must not fire onDisconnect
   // (no reconnect scheduled either). Without the guard, the UI shows a
   // stale "正在重连" banner after the user clicks "断开".
   it("close() suppresses the onclose-driven onDisconnect + scheduleReconnect", async () => {
