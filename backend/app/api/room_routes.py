@@ -34,6 +34,7 @@ WS endpoint accordingly.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import (
@@ -46,7 +47,7 @@ from fastapi import (
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.bilibili.client import BilibiliClient
+from app.bilibili.client import BilibiliClient, RoomUserRole
 from app.room.bridge import (
     RoomBridge,
     get_room_bridge,
@@ -55,6 +56,7 @@ from app.room.bridge import (
 from app.room.session import RoomSession
 
 router: APIRouter = APIRouter(tags=["rooms"])
+_ROLE_LOOKUP_TIMEOUT_SECONDS = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +139,7 @@ class StartRoomResponse(BaseModel):
 
     room_id: int
     title: str = ""
+    role: RoomUserRole = "unknown"
 
 
 class StopRoomResponse(BaseModel):
@@ -240,7 +243,21 @@ async def start_room_route(body: StartRoomRequest) -> StartRoomResponse:
     connected_room_id = (
         resolved_room_id if isinstance(resolved_room_id, int) else body.room_id
     )
-    return StartRoomResponse(room_id=connected_room_id, title="")
+    try:
+        role = await asyncio.wait_for(
+            bili.get_room_user_role(connected_room_id),
+            timeout=_ROLE_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        # Role display is useful context, not a prerequisite for receiving
+        # danmaku. A transient read failure must not tear down a live bridge.
+        logger.warning(
+            "room_routes.start_room_route: role lookup failed room={} err={!r}",
+            connected_room_id,
+            exc,
+        )
+        role = "unknown"
+    return StartRoomResponse(room_id=connected_room_id, title="", role=role)
 
 
 @router.post(

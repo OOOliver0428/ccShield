@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from loguru import logger
@@ -78,6 +78,22 @@ _DEFAULT_HEADERS: dict[str, str] = {
 # keep the runaway-response guard without truncating ordinary moderation
 # lists at 100 rows.
 _BAN_LIST_MAX_PAGES: int = 100
+_ROOM_ADMIN_MAX_PAGES: int = 100
+
+RoomUserRole = Literal["anchor", "admin", "viewer", "unknown"]
+
+
+def _positive_int(value: object) -> int | None:
+    """Coerce B站's integer-or-decimal-string ids without accepting bools."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.isdecimal():
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +308,90 @@ class BilibiliClient:
             return None
         info = data.get("info")
         return info if isinstance(info, dict) else None
+
+    async def is_room_admin(self, room_id: int, uid: int) -> bool | None:
+        """Return whether ``uid`` is in the room's public administrator list.
+
+        ``None`` means the read-only list could not be parsed or fetched, which
+        must not be presented to the moderator as a confident "viewer" result.
+        B站 currently returns ten rows per page under ``data.data``; pagination
+        is followed to the reported end with a defensive safety cap.
+        """
+
+        url = f"{_LIVE_BASE_URL}/xlive/web-room/v1/roomAdmin/get_by_room"
+        for page_number in range(1, _ROOM_ADMIN_MAX_PAGES + 1):
+            response = await self._client.get(
+                url,
+                params={"roomid": str(room_id), "page": str(page_number)},
+                headers=_DEFAULT_HEADERS,
+            )
+            body = self._parse_body(response)
+            if body.get("code", -1) != 0:
+                logger.warning(
+                    "is_room_admin: code={} msg={} room={} page={}",
+                    body.get("code"),
+                    body.get("message"),
+                    room_id,
+                    page_number,
+                )
+                return None
+
+            data = body.get("data")
+            if not isinstance(data, dict):
+                return None
+            rows = data.get("data", data.get("list"))
+            if not isinstance(rows, list):
+                return None
+
+            for row in rows:
+                if isinstance(row, dict) and _positive_int(row.get("uid")) == uid:
+                    return True
+
+            page_info = data.get("page")
+            total_pages = (
+                _positive_int(page_info.get("total_page"))
+                if isinstance(page_info, dict)
+                else None
+            )
+            if total_pages is not None and page_number >= total_pages:
+                return False
+            if not rows:
+                return False
+
+        logger.warning(
+            "is_room_admin: truncating room={} at safety cap={}",
+            room_id,
+            _ROOM_ADMIN_MAX_PAGES,
+        )
+        return None
+
+    async def get_room_user_role(self, room_id: int) -> RoomUserRole:
+        """Identify the logged-in user as anchor, room admin or viewer."""
+
+        user_info = await self.get_user_info()
+        current_uid = (
+            _positive_int(user_info.get("mid"))
+            if isinstance(user_info, dict)
+            else None
+        )
+        if current_uid is None:
+            return "unknown"
+
+        room_init = await self.get_room_init(room_id)
+        anchor_uid = (
+            _positive_int(room_init.get("uid"))
+            if isinstance(room_init, dict)
+            else None
+        )
+        if anchor_uid is None:
+            return "unknown"
+        if current_uid == anchor_uid:
+            return "anchor"
+
+        is_admin = await self.is_room_admin(room_id, current_uid)
+        if is_admin is None:
+            return "unknown"
+        return "admin" if is_admin else "viewer"
 
     async def get_active_super_chats(
         self, room_id: int
@@ -701,6 +801,7 @@ class BilibiliClient:
 
 __all__ = [
     "BilibiliClient",
+    "RoomUserRole",
 ]
 
 

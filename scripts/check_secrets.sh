@@ -51,6 +51,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# --- reject tracked user-local state -----------------------------------------
+# .gitignore prevents an ordinary `git add`, but `git add -f` can override it.
+# CI must still refuse a commit that contains a real login file or a user's
+# private quick-room shortcuts. Example/template files are intentionally not
+# included in this exact-path denylist.
+LOCAL_ONLY_PATHS=(
+  ".env"
+  "config/quick_rooms.json"
+)
+tracked_local_paths=()
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  for path in "${LOCAL_ONLY_PATHS[@]}"; do
+    if git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      tracked_local_paths+=("$path")
+    fi
+  done
+fi
+
+if [ "${#tracked_local_paths[@]}" -gt 0 ]; then
+  echo "check_secrets: user-local file(s) are tracked — refusing to continue." >&2
+  printf '  - %s\n' "${tracked_local_paths[@]}" >&2
+  echo "Remove them from Git tracking; keep only .env.example and config/quick_rooms.example.json." >&2
+  exit 1
+fi
+
 # --- enumerate input files ---------------------------------------------------
 # Path-filter is defense-in-depth: these paths are .gitignore'd already and
 # should never appear in `git ls-files`, but a broken .gitignore or a stray

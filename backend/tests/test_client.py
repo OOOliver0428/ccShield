@@ -307,6 +307,100 @@ def test_get_anchor_info_returns_public_uname() -> None:
     assert info == {"uid": 999, "uname": "anchor-name"}
 
 
+def test_get_room_user_role_prefers_anchor_without_fetching_admins() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(200, json={"code": 0, "data": {"mid": 42}})
+        if request.url.path == "/room/v1/Room/room_init":
+            return httpx.Response(
+                200,
+                json={"code": 0, "data": {"room_id": 1601605, "uid": 42}},
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = make_client(handler)
+    assert run(client.get_room_user_role(1601605)) == "anchor"
+    assert not any("roomAdmin" in path for path in requested_paths)
+
+
+def test_get_room_user_role_finds_admin_across_pages() -> None:
+    requested_pages: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(200, json={"code": 0, "data": {"mid": 55}})
+        if request.url.path == "/room/v1/Room/room_init":
+            return httpx.Response(
+                200,
+                json={"code": 0, "data": {"room_id": 1601605, "uid": 99}},
+            )
+        if request.url.path.endswith("/roomAdmin/get_by_room"):
+            page = request.url.params.get("page")
+            requested_pages.append(page)
+            rows = [{"uid": 7}] if page == "1" else [{"uid": "55"}]
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "page": {"page": int(page or "1"), "total_page": 2},
+                        "data": rows,
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = make_client(handler)
+    assert run(client.get_room_user_role(1601605)) == "admin"
+    assert requested_pages == ["1", "2"]
+
+
+def test_get_room_user_role_returns_viewer_after_complete_admin_list() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(200, json={"code": 0, "data": {"mid": 55}})
+        if request.url.path == "/room/v1/Room/room_init":
+            return httpx.Response(
+                200,
+                json={"code": 0, "data": {"room_id": 1601605, "uid": 99}},
+            )
+        if request.url.path.endswith("/roomAdmin/get_by_room"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "page": {"page": 1, "total_page": 1},
+                        "data": [{"uid": 7}],
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = make_client(handler)
+    assert run(client.get_room_user_role(1601605)) == "viewer"
+
+
+def test_get_room_user_role_does_not_mislabel_failed_admin_lookup() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(200, json={"code": 0, "data": {"mid": 55}})
+        if request.url.path == "/room/v1/Room/room_init":
+            return httpx.Response(
+                200,
+                json={"code": 0, "data": {"room_id": 1601605, "uid": 99}},
+            )
+        if request.url.path.endswith("/roomAdmin/get_by_room"):
+            return httpx.Response(200, json={"code": -400, "message": "bad"})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = make_client(handler)
+    assert run(client.get_room_user_role(1601605)) == "unknown"
+
+
 def test_resolve_room_id_enriches_missing_anchor_name() -> None:
     seen_paths: list[str] = []
 

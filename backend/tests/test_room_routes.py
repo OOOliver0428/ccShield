@@ -102,16 +102,19 @@ class _FakeFactory:
     factory_calls: list[BilibiliClient]
     mocks: list[AsyncMock]
     make: Callable[[], AsyncMock]
+    bili_client: AsyncMock
 
     def __init__(
         self,
         factory_calls: list[BilibiliClient],
         mocks: list[AsyncMock],
         make_fn: Callable[[], AsyncMock],
+        bili_client: AsyncMock,
     ) -> None:
         self.factory_calls = factory_calls
         self.mocks = mocks
         self.make = make_fn
+        self.bili_client = bili_client
 
 
 @pytest.fixture
@@ -131,6 +134,8 @@ def fake_session_factory(
 
     factory_calls: list[BilibiliClient] = []
     mocks: list[AsyncMock] = []
+    bili_client = AsyncMock(spec=BilibiliClient)
+    bili_client.get_room_user_role = AsyncMock(return_value="viewer")
 
     def _build() -> AsyncMock:
         mock = AsyncMock(spec=RoomSession)
@@ -144,7 +149,13 @@ def fake_session_factory(
     from app.api import room_routes
 
     monkeypatch.setattr(room_routes, "_make_room_session", factory)
-    return _FakeFactory(factory_calls=factory_calls, mocks=mocks, make_fn=_build)
+    monkeypatch.setattr(room_routes, "_get_bili_client", lambda: bili_client)
+    return _FakeFactory(
+        factory_calls=factory_calls,
+        mocks=mocks,
+        make_fn=_build,
+        bili_client=bili_client,
+    )
 
 
 def _make_mock_session(
@@ -331,11 +342,45 @@ def test_start_returns_200_and_sets_bridge_when_connect_succeeds(
     assert response.status_code == 200
     body = response.json()
     assert body["room_id"] == 22210347
+    assert body["role"] == "viewer"
 
     bridge = room_routes.get_room_bridge()
     assert bridge is not None, "start must set the singleton bridge"
     assert expected_mock.connect.await_count == 1
     expected_mock.connect.assert_awaited_with(22210347)
+    fake_session_factory.bili_client.get_room_user_role.assert_awaited_once_with(
+        22210347
+    )
+
+
+def test_start_keeps_room_connected_when_role_lookup_fails(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session_factory: _FakeFactory,
+) -> None:
+    from app.api import room_routes
+
+    session = fake_session_factory.make()
+    session.connect = AsyncMock(return_value=True)
+    session.room_id = 1601605
+
+    async def factory_with_session(_bili: BilibiliClient) -> AsyncMock:
+        return session
+
+    monkeypatch.setattr(room_routes, "_make_room_session", factory_with_session)
+    fake_session_factory.bili_client.get_room_user_role.side_effect = OSError(
+        "temporary read failure"
+    )
+
+    response = client.post(
+        "/api/rooms/start",
+        json={"room_id": 1601605},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "unknown"
+    assert room_routes.get_room_bridge() is not None
 
 
 # ---------------------------------------------------------------------------

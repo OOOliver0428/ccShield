@@ -68,7 +68,7 @@ describe("room store", () => {
       server.use(
         http.post("*/api/rooms/start", async ({ request }) => {
           postedBody = await request.json();
-          return HttpResponse.json({ room_id: 22210347, title: "" });
+          return HttpResponse.json({ room_id: 22210347, title: "", role: "admin" });
         }),
       );
 
@@ -81,6 +81,7 @@ describe("room store", () => {
       expect(postedBody).toEqual({ room_id: 22210347 });
       expect(store.status).toBe("connected");
       expect(store.currentRoomId).toBe(22210347);
+      expect(store.currentUserRole).toBe("admin");
     });
 
     it("flips status to disconnected when /rooms/start fails", async () => {
@@ -98,6 +99,7 @@ describe("room store", () => {
       expect(store.currentRoomId).toBeNull();
       expect(store.resolvedTitle).toBe("");
       expect(store.resolvedUname).toBe("");
+      expect(store.currentUserRole).toBe("unknown");
     });
   });
 
@@ -115,12 +117,14 @@ describe("room store", () => {
       // Pretend we are connected.
       store.currentRoomId = 22210347;
       store.status = "connected";
+      store.currentUserRole = "anchor";
 
       await store.disconnect();
 
       expect(stopCalls).toBe(1);
       expect(store.status).toBe("disconnected");
       expect(store.currentRoomId).toBeNull();
+      expect(store.currentUserRole).toBe("unknown");
     });
   });
 

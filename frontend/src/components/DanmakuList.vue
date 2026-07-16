@@ -10,6 +10,76 @@ import FanMedal from "./FanMedal.vue";
 import GuardBadge from "./GuardBadge.vue";
 import SuperChatItem from "./SuperChatItem.vue";
 
+const FONT_STORAGE_KEY = "ccshield-danmaku-font-size";
+const DANMAKU_FONT_SIZES = [12, 14, 16, 18] as const;
+type DanmakuFontSize = (typeof DANMAKU_FONT_SIZES)[number];
+
+interface FontMetrics {
+  uname: number;
+  timestamp: number;
+  badge: number;
+  avatar: number;
+  avatarText: number;
+  rowMinHeight: number;
+  rowPaddingY: number;
+  rowGap: number;
+}
+
+const FONT_METRICS: Record<DanmakuFontSize, FontMetrics> = {
+  12: {
+    uname: 11,
+    timestamp: 9,
+    badge: 9,
+    avatar: 30,
+    avatarText: 11,
+    rowMinHeight: 54,
+    rowPaddingY: 8,
+    rowGap: 10,
+  },
+  14: {
+    uname: 13,
+    timestamp: 10,
+    badge: 10,
+    avatar: 32,
+    avatarText: 12,
+    rowMinHeight: 60,
+    rowPaddingY: 9,
+    rowGap: 10,
+  },
+  16: {
+    uname: 15,
+    timestamp: 11,
+    badge: 11,
+    avatar: 34,
+    avatarText: 13,
+    rowMinHeight: 68,
+    rowPaddingY: 10,
+    rowGap: 11,
+  },
+  18: {
+    uname: 17,
+    timestamp: 12,
+    badge: 12,
+    avatar: 36,
+    avatarText: 14,
+    rowMinHeight: 76,
+    rowPaddingY: 11,
+    rowGap: 12,
+  },
+};
+
+function readStoredFontSize(): DanmakuFontSize {
+  try {
+    const stored = Number(window.localStorage.getItem(FONT_STORAGE_KEY));
+    if (DANMAKU_FONT_SIZES.some((size) => size === stored)) {
+      return stored as DanmakuFontSize;
+    }
+  } catch {
+    // The control remains usable when browser storage is unavailable.
+  }
+  return DANMAKU_FONT_SIZES[0];
+}
+
 /**
  * T24 — danmaku + SC list, fully assembled.
  *
@@ -34,6 +104,8 @@ const userScrolledUp = ref<boolean>(false);
 const unseenDanmakuCount = ref<number>(0);
 const selectedForBan = ref<DanmakuItem | null>(null);
 const actionError = ref<string | null>(null);
+const initialFontSize = readStoredFontSize();
+const fontSizeIndex = ref<number>(DANMAKU_FONT_SIZES.indexOf(initialFontSize));
 const rowKeys = new WeakMap<DanmakuItem, number>();
 let nextRowKey = 1;
 
@@ -41,6 +113,85 @@ const hasDanmaku = computed(() => danmaku.list.length > 0);
 const sortedScList = computed(() =>
   [...danmaku.scList].sort((left, right) => right.price - left.price),
 );
+const selectedFontSize = computed<DanmakuFontSize>(
+  () => DANMAKU_FONT_SIZES[fontSizeIndex.value] ?? DANMAKU_FONT_SIZES[0],
+);
+const canDecreaseFont = computed(() => fontSizeIndex.value > 0);
+const canIncreaseFont = computed(
+  () => fontSizeIndex.value < DANMAKU_FONT_SIZES.length - 1,
+);
+const danmakuFontStyle = computed<Record<string, string>>(() => {
+  const metrics = FONT_METRICS[selectedFontSize.value];
+  return {
+    "--danmaku-text-size": `${selectedFontSize.value}px`,
+    "--danmaku-uname-size": `${metrics.uname}px`,
+    "--danmaku-time-size": `${metrics.timestamp}px`,
+    "--danmaku-badge-size": `${metrics.badge}px`,
+    "--danmaku-avatar-size": `${metrics.avatar}px`,
+    "--danmaku-avatar-text-size": `${metrics.avatarText}px`,
+    "--danmaku-row-min-height": `${metrics.rowMinHeight}px`,
+    "--danmaku-row-padding-y": `${metrics.rowPaddingY}px`,
+    "--danmaku-row-gap": `${metrics.rowGap}px`,
+  };
+});
+
+interface ReviewAnchor {
+  key: string;
+  offset: number;
+}
+
+function captureReviewAnchor(el: HTMLElement): ReviewAnchor | null {
+  const rootTop = el.getBoundingClientRect().top;
+  const rows = Array.from(
+    el.querySelectorAll<HTMLElement>("[data-row-key]"),
+  );
+  const row = rows.find(
+    (candidate) => candidate.getBoundingClientRect().bottom > rootTop,
+  ) ?? rows[0];
+  if (row === undefined) return null;
+  return {
+    key: row.dataset.rowKey ?? "",
+    offset: row.getBoundingClientRect().top - rootTop,
+  };
+}
+
+function persistFontSize(size: DanmakuFontSize): void {
+  try {
+    window.localStorage.setItem(FONT_STORAGE_KEY, String(size));
+  } catch {
+    // In-memory adjustment still works when storage is unavailable.
+  }
+}
+
+async function changeFontSize(direction: -1 | 1): Promise<void> {
+  const nextIndex = fontSizeIndex.value + direction;
+  if (nextIndex < 0 || nextIndex >= DANMAKU_FONT_SIZES.length) return;
+
+  const el = scrollRoot.value;
+  const wasPinned = el !== null
+    && (!userScrolledUp.value || isPinnedToBottom(el));
+  const reviewAnchor = el !== null && !wasPinned
+    ? captureReviewAnchor(el)
+    : null;
+
+  fontSizeIndex.value = nextIndex;
+  persistFontSize(selectedFontSize.value);
+  await nextTick();
+
+  if (el === null) return;
+  if (wasPinned) {
+    el.scrollTop = el.scrollHeight;
+    return;
+  }
+  if (reviewAnchor === null || reviewAnchor.key === "") return;
+  const anchoredRow = el.querySelector<HTMLElement>(
+    `[data-row-key="${reviewAnchor.key}"]`,
+  );
+  if (anchoredRow === null) return;
+  const currentOffset = anchoredRow.getBoundingClientRect().top
+    - el.getBoundingClientRect().top;
+  el.scrollTop += currentOffset - reviewAnchor.offset;
+}
 
 function rowKey(item: DanmakuItem): number {
   const existing = rowKeys.get(item);
@@ -181,6 +332,27 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
       </div>
       <div class="header-actions">
         <span class="live-chip"><i aria-hidden="true" /> 实时</span>
+        <div class="font-control" role="group" aria-label="实时弹幕字号">
+          <button
+            type="button"
+            class="font-button"
+            :disabled="!canDecreaseFont"
+            data-testid="font-decrease-btn"
+            aria-label="减小实时弹幕字号"
+            @click="changeFontSize(-1)"
+          >A−</button>
+          <span class="font-size-label" data-testid="font-size-label">
+            {{ selectedFontSize }}px
+          </span>
+          <button
+            type="button"
+            class="font-button"
+            :disabled="!canIncreaseFont"
+            data-testid="font-increase-btn"
+            aria-label="增大实时弹幕字号"
+            @click="changeFontSize(1)"
+          >A+</button>
+        </div>
         <el-button
           link
           size="small"
@@ -239,6 +411,8 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
     <div
       ref="scrollRoot"
       class="scroll-root"
+      :style="danmakuFontStyle"
+      :data-font-size="selectedFontSize"
       data-testid="scroll-root"
       role="log"
       aria-label="实时弹幕"
@@ -256,6 +430,7 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
         <div
           v-for="item in danmaku.list"
           :key="rowKey(item)"
+          :data-row-key="rowKey(item)"
           class="row"
           data-testid="danmaku-row"
         >
@@ -393,6 +568,51 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   background: currentColor;
   box-shadow: 0 0 10px currentColor;
 }
+.font-control {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--cc-border-strong);
+  border-radius: 8px;
+  background: var(--cc-fill-soft);
+}
+.font-button {
+  display: grid;
+  width: 28px;
+  height: 100%;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  color: var(--cc-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 720;
+}
+.font-button:hover:not(:disabled) {
+  color: var(--cc-primary-emphasis);
+  background: var(--cc-primary-soft);
+}
+.font-button:disabled {
+  color: var(--cc-text-muted);
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.font-size-label {
+  display: grid;
+  min-width: 37px;
+  height: 100%;
+  padding: 0 4px;
+  place-items: center;
+  border-right: 1px solid var(--cc-border);
+  border-left: 1px solid var(--cc-border);
+  color: var(--cc-text-secondary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .sc-panel {
   flex: 0 0 auto;
   overflow: hidden;
@@ -441,8 +661,8 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   min-height: 0;
   overflow-y: auto;
   padding: 7px 8px 12px;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--danmaku-text-size, 12px);
+  line-height: 1.55;
 }
 .review-footer {
   display: flex;
@@ -554,10 +774,10 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
 .row {
   position: relative;
   display: flex;
-  min-height: 54px;
-  padding: 8px 9px;
+  min-height: var(--danmaku-row-min-height, 54px);
+  padding: var(--danmaku-row-padding-y, 8px) 9px;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--danmaku-row-gap, 10px);
   border-bottom: 1px solid var(--cc-separator);
   border-radius: 9px;
   transition: background-color 160ms ease;
@@ -568,16 +788,16 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
 }
 .avatar {
   display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: var(--danmaku-avatar-size, 30px);
+  height: var(--danmaku-avatar-size, 30px);
+  flex: 0 0 var(--danmaku-avatar-size, 30px);
   margin-top: 1px;
   place-items: center;
   border: 1px solid var(--cc-border);
   border-radius: 9px;
   color: var(--cc-primary-emphasis);
   background: var(--cc-primary-soft);
-  font-size: 11px;
+  font-size: var(--danmaku-avatar-text-size, 11px);
   font-weight: 720;
 }
 .message-body {
@@ -591,25 +811,28 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   display: flex;
   min-width: 0;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
+  row-gap: 3px;
+  transition: padding-right 140ms ease;
 }
 .row .uname {
   overflow: hidden;
   color: var(--cc-primary-emphasis);
-  font-size: 11px;
+  font-size: var(--danmaku-uname-size, 11px);
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .row .text {
   color: var(--cc-message-text);
-  font-size: 12px;
+  font-size: var(--danmaku-text-size, 12px);
   word-break: break-word;
 }
 .row .ts {
   margin-left: auto;
   color: var(--cc-text-muted);
-  font-size: 9px;
+  font-size: var(--danmaku-time-size, 9px);
   font-variant-numeric: tabular-nums;
 }
 .row-actions {
@@ -630,6 +853,10 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
 .row:focus-within .row-actions {
   opacity: 1;
 }
+.row:hover .message-meta,
+.row:focus-within .message-meta {
+  padding-right: 140px;
+}
 @media (hover: none), (max-width: 768px) {
   .row-actions {
     position: static;
@@ -641,6 +868,10 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   }
   .row {
     flex-wrap: wrap;
+  }
+  .row:hover .message-meta,
+  .row:focus-within .message-meta {
+    padding-right: 0;
   }
   .sc-cards :deep(.sc-card) {
     width: min(280px, 82vw);
@@ -659,6 +890,9 @@ async function quickSessionBan(item: DanmakuItem): Promise<void> {
   }
   .live-chip {
     display: none;
+  }
+  .header-actions {
+    gap: 5px;
   }
   .row-actions :deep(.el-button) {
     min-height: 38px;

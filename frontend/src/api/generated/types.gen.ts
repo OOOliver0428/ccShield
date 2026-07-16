@@ -392,6 +392,10 @@ export type StartRoomResponse = {
      * Title
      */
     title?: string;
+    /**
+     * Role
+     */
+    role?: 'anchor' | 'admin' | 'viewer' | 'unknown';
 };
 
 /**

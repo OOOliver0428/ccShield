@@ -46,6 +46,7 @@ function makeSc(uid: number, text: string, price: number) {
 describe("DanmakuList.vue", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -61,6 +62,51 @@ describe("DanmakuList.vue", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.text()).toContain("user1");
     expect(rows[0]!.text()).toContain("hello world");
+  });
+
+  it("starts at the current 12px minimum and exposes four font sizes", async () => {
+    const wrapper = mount(DanmakuList);
+    const scrollRoot = wrapper.get('[data-testid="scroll-root"]');
+    const decrease = wrapper.get('[data-testid="font-decrease-btn"]');
+    const increase = wrapper.get('[data-testid="font-increase-btn"]');
+
+    expect(wrapper.get('[data-testid="font-size-label"]').text()).toBe("12px");
+    expect(scrollRoot.attributes("data-font-size")).toBe("12");
+    expect(scrollRoot.attributes("style")).toContain("--danmaku-text-size: 12px");
+    expect(decrease.attributes("disabled")).toBeDefined();
+
+    await increase.trigger("click");
+    await increase.trigger("click");
+    await increase.trigger("click");
+
+    expect(wrapper.get('[data-testid="font-size-label"]').text()).toBe("18px");
+    expect(scrollRoot.attributes("data-font-size")).toBe("18");
+    expect(increase.attributes("disabled")).toBeDefined();
+    expect(window.localStorage.getItem("ccshield-danmaku-font-size")).toBe("18");
+
+    await decrease.trigger("click");
+    expect(wrapper.get('[data-testid="font-size-label"]').text()).toBe("16px");
+  });
+
+  it("restores the moderator's saved font size", () => {
+    window.localStorage.setItem("ccshield-danmaku-font-size", "16");
+
+    const wrapper = mount(DanmakuList);
+
+    expect(wrapper.get('[data-testid="font-size-label"]').text()).toBe("16px");
+    expect(wrapper.get('[data-testid="scroll-root"]').attributes("data-font-size")).toBe("16");
+  });
+
+  it("keeps SC outside the adjustable ordinary-danmaku font container", async () => {
+    const store = useDanmakuStore();
+    store.addSc(makeSc(7, "gift!", 500));
+    const wrapper = mount(DanmakuList);
+
+    await wrapper.get('[data-testid="font-increase-btn"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="sc-row"]').element.closest(".scroll-root")).toBeNull();
+    expect(wrapper.get('[data-testid="sc-panel"]').attributes("style")).toBeUndefined();
+    expect(wrapper.get('[data-testid="scroll-root"]').attributes("data-font-size")).toBe("14");
   });
 
   it("renders millisecond danmaku timestamps without multiplying them again", () => {
@@ -307,6 +353,62 @@ describe("DanmakuList.vue", () => {
 
     expect(scrollRoot.scrollTop).toBe(scrollRoot.scrollHeight);
 
+    wrapper.unmount();
+  });
+
+  it("stays on the live edge when the font size changes", async () => {
+    const wrapper = mount(DanmakuList, { attachTo: document.body });
+    const scrollRoot = wrapper.get('[data-testid="scroll-root"]')
+      .element as HTMLElement;
+
+    Object.defineProperty(scrollRoot, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(scrollRoot, "clientHeight", {
+      configurable: true,
+      get: () => 100,
+    });
+    scrollRoot.scrollTop = 400;
+
+    await wrapper.get('[data-testid="font-increase-btn"]').trigger("click");
+
+    expect(scrollRoot.scrollTop).toBe(scrollRoot.scrollHeight);
+    wrapper.unmount();
+  });
+
+  it("preserves the first visible row while changing font in review mode", async () => {
+    const store = useDanmakuStore();
+    store.addDanmaku(makeDanmaku(1, "review anchor"));
+    const wrapper = mount(DanmakuList, { attachTo: document.body });
+    const scrollRoot = wrapper.get('[data-testid="scroll-root"]')
+      .element as HTMLElement;
+    const row = wrapper.get('[data-testid="danmaku-row"]').element as HTMLElement;
+
+    Object.defineProperty(scrollRoot, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+    Object.defineProperty(scrollRoot, "clientHeight", {
+      configurable: true,
+      get: () => 100,
+    });
+    vi.spyOn(scrollRoot, "getBoundingClientRect").mockReturnValue({
+      top: 100,
+      bottom: 200,
+    } as DOMRect);
+    vi.spyOn(row, "getBoundingClientRect").mockImplementation(() => ({
+      top: scrollRoot.dataset.fontSize === "12" ? 120 : 150,
+      bottom: scrollRoot.dataset.fontSize === "12" ? 150 : 180,
+    } as DOMRect));
+    scrollRoot.scrollTop = 100;
+    await scrollRoot.dispatchEvent(new Event("scroll"));
+    await wrapper.vm.$nextTick();
+
+    await wrapper.get('[data-testid="font-increase-btn"]').trigger("click");
+
+    expect(scrollRoot.scrollTop).toBe(130);
+    expect(wrapper.find('[data-testid="view-latest-btn"]').exists()).toBe(false);
     wrapper.unmount();
   });
 

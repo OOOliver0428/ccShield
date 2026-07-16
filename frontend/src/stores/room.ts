@@ -26,6 +26,7 @@ import { ref } from "vue";
 import { httpClient } from "../api/client";
 
 export type RoomStatus = "disconnected" | "connecting" | "connected";
+export type RoomUserRole = "anchor" | "admin" | "viewer" | "unknown";
 
 export interface ResolveRoomResponse {
   room_id: number;
@@ -47,6 +48,7 @@ export interface RoomShortcutMetadata {
 interface StartRoomResponse {
   room_id: number;
   title?: string;
+  role?: RoomUserRole;
 }
 
 export const useRoomStore = defineStore("room", () => {
@@ -57,6 +59,7 @@ export const useRoomStore = defineStore("room", () => {
   const resolvedTitle = ref<string>("");
   const resolvedUname = ref<string>("");
   const resolvedShortId = ref<number | null>(null);
+  const currentUserRole = ref<RoomUserRole>("unknown");
 
   async function resolve(input: string): Promise<ResolveRoomResponse | null> {
     error.value = null;
@@ -90,6 +93,7 @@ export const useRoomStore = defineStore("room", () => {
         room_id: roomIdToStart,
       });
       currentRoomId.value = response.data.room_id;
+      currentUserRole.value = response.data.role ?? "unknown";
       status.value = "connected";
       return true;
     } catch (err) {
@@ -98,6 +102,7 @@ export const useRoomStore = defineStore("room", () => {
       resolvedTitle.value = "";
       resolvedUname.value = "";
       resolvedShortId.value = null;
+      currentUserRole.value = "unknown";
       error.value = (err as Error).message;
       return false;
     }
@@ -109,6 +114,7 @@ export const useRoomStore = defineStore("room", () => {
     resolvedShortId.value = shortcut.short_id ?? shortcut.room_id;
     resolvedTitle.value = shortcut.title ?? "";
     resolvedUname.value = shortcut.uname ?? "";
+    currentUserRole.value = "unknown";
     error.value = null;
   }
 
@@ -123,6 +129,7 @@ export const useRoomStore = defineStore("room", () => {
       resolvedTitle.value = "";
       resolvedUname.value = "";
       resolvedShortId.value = null;
+      currentUserRole.value = "unknown";
     }
   }
 
@@ -142,6 +149,7 @@ export const useRoomStore = defineStore("room", () => {
       status.value = "connecting";
     } else {
       status.value = "disconnected";
+      currentUserRole.value = "unknown";
     }
   }
 
@@ -153,6 +161,7 @@ export const useRoomStore = defineStore("room", () => {
     resolvedTitle,
     resolvedUname,
     resolvedShortId,
+    currentUserRole,
     resolve,
     connect,
     prepareShortcut,

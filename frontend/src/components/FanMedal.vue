@@ -43,7 +43,7 @@ const hasMedal = computed(() => props.medal !== null);
   align-items: stretch;
   border-radius: 5px;
   overflow: hidden;
-  font-size: 9px;
+  font-size: var(--danmaku-badge-size, 9px);
   line-height: 1.45;
   user-select: none;
   border: 1px solid rgb(124 140 255 / 42%);

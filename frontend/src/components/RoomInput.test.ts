@@ -89,7 +89,11 @@ describe("RoomInput.vue", () => {
         }),
       ),
       http.post("*/api/rooms/start", () =>
-        HttpResponse.json({ room_id: 1601605, title: "测试直播标题" }),
+        HttpResponse.json({
+          room_id: 1601605,
+          title: "测试直播标题",
+          role: "admin",
+        }),
       ),
     );
 
@@ -105,7 +109,23 @@ describe("RoomInput.vue", () => {
     expect(wrapper.find('[data-testid="room-anchor"]').text()).toBe("测试主播");
     expect(wrapper.find('[data-testid="room-number"]').text()).toBe("1601605");
     expect(wrapper.find('[data-testid="room-title"]').text()).toBe("测试直播标题");
+    expect(wrapper.find('[data-testid="room-role"]').text()).toBe("房管");
     expect(wrapper.find('[data-testid="resolved-hint"]').exists()).toBe(false);
+  });
+
+  it.each([
+    ["anchor", "主播"],
+    ["admin", "房管"],
+    ["viewer", "观众"],
+    ["unknown", "暂未识别"],
+  ] as const)("renders connected room role %s as %s", (role, label) => {
+    const store = useRoomStore();
+    store.currentRoomId = 1601605;
+    store.status = "connected";
+    store.currentUserRole = role;
+
+    const wrapper = mount(RoomInput);
+    expect(wrapper.find('[data-testid="room-role"]').text()).toBe(label);
   });
 
   it("clicking 断开 calls /rooms/stop and flips status back", async () => {

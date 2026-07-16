@@ -37,6 +37,19 @@ const statusLabel = computed(() => {
 
 const statusClass = computed(() => `status status-${room.status}`);
 
+const roleLabel = computed(() => {
+  switch (room.currentUserRole) {
+    case "anchor":
+      return "主播";
+    case "admin":
+      return "房管";
+    case "viewer":
+      return "观众";
+    default:
+      return "暂未识别";
+  }
+});
+
 const canSubmit = computed(
   () => inputText.value.trim().length > 0 && room.status === "disconnected",
 );
@@ -146,22 +159,29 @@ async function onDisconnect(): Promise<void> {
       <div class="room-info-item anchor-item">
         <span class="info-icon" aria-hidden="true">主</span>
         <span class="info-copy">
-        <span class="room-info-label">主播</span>
-        <strong data-testid="room-anchor">{{ room.resolvedUname || "—" }}</strong>
+          <span class="room-info-label">主播</span>
+          <strong data-testid="room-anchor">{{ room.resolvedUname || "—" }}</strong>
         </span>
       </div>
       <div class="room-info-item">
         <span class="info-icon" aria-hidden="true">#</span>
         <span class="info-copy">
-        <span class="room-info-label">房间号</span>
-        <strong data-testid="room-number">{{ room.currentRoomId }}</strong>
+          <span class="room-info-label">房间号</span>
+          <strong data-testid="room-number">{{ room.currentRoomId }}</strong>
+        </span>
+      </div>
+      <div class="room-info-item role-item" :class="`role-${room.currentUserRole}`">
+        <span class="info-icon role-icon" aria-hidden="true">我</span>
+        <span class="info-copy">
+          <span class="room-info-label">我的身份</span>
+          <strong data-testid="room-role">{{ roleLabel }}</strong>
         </span>
       </div>
       <div class="room-info-item room-title-item">
         <span class="info-icon title-icon" aria-hidden="true">播</span>
         <span class="info-copy">
-        <span class="room-info-label">直播标题</span>
-        <strong data-testid="room-title">{{ room.resolvedTitle || "—" }}</strong>
+          <span class="room-info-label">直播标题</span>
+          <strong data-testid="room-title">{{ room.resolvedTitle || "—" }}</strong>
         </span>
       </div>
     </section>
@@ -294,7 +314,7 @@ async function onDisconnect(): Promise<void> {
 }
 .room-info {
   display: grid;
-  grid-template-columns: minmax(160px, 0.8fr) minmax(130px, 0.55fr) minmax(280px, 2fr);
+  grid-template-columns: minmax(150px, 0.8fr) minmax(115px, 0.55fr) minmax(115px, 0.55fr) minmax(240px, 2fr);
   gap: 10px;
   width: 100%;
   padding-right: 118px;
@@ -325,6 +345,25 @@ async function onDisconnect(): Promise<void> {
   color: var(--cc-success-emphasis);
   background: var(--cc-success-soft);
 }
+.role-anchor .role-icon {
+  color: var(--cc-warning);
+  background: var(--cc-warning-soft);
+}
+.role-admin .role-icon {
+  color: var(--cc-primary-emphasis);
+  background: var(--cc-primary-soft);
+}
+.role-viewer .role-icon,
+.role-unknown .role-icon {
+  color: var(--cc-text-secondary);
+  background: var(--cc-fill-soft);
+}
+.role-anchor strong {
+  color: var(--cc-warning);
+}
+.role-admin strong {
+  color: var(--cc-primary-emphasis);
+}
 .info-copy {
   display: flex;
   min-width: 0;
@@ -348,7 +387,11 @@ async function onDisconnect(): Promise<void> {
     position: static;
   }
   .room-info {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     padding-right: 0;
+  }
+  .room-title-item {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 640px) {
@@ -377,8 +420,11 @@ async function onDisconnect(): Promise<void> {
     width: auto;
   }
   .room-info {
-    grid-template-columns: minmax(120px, 0.75fr) minmax(105px, 0.55fr) minmax(180px, 1.6fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding-right: 110px;
+  }
+  .room-title-item {
+    grid-column: 1 / -1;
   }
   .room-info-item {
     padding: 9px 10px;

@@ -79,6 +79,18 @@ Copy it to `.env`, fill in real values. Don't commit `.env`.
 !.env.example
 ```
 
+## User-local shortcut state
+
+Quick-room shortcuts are separate user state, not application settings. They are
+stored in `<repo>/config/quick_rooms.json`; the file is created on first use and
+must stay on the user's machine. Only the empty/example structure at
+`config/quick_rooms.example.json` is committed.
+
+Both `.env` and `config/quick_rooms.json` are ignored by Git. The CI secret gate
+also rejects these exact paths if somebody bypasses `.gitignore` with a forced
+add, so personal cookies and shortcut-room choices cannot be included in a
+normal release commit.
+
 ## Security note on `HOST`
 
 The default `HOST=127.0.0.1` is part of the threat model in

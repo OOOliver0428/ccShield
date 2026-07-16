@@ -10,8 +10,10 @@ venv/
 
 # Test / coverage
 .coverage
+coverage.xml
 htmlcov/
 .pytest_cache/
+pytest-results.xml
 
 # Node
 node_modules/

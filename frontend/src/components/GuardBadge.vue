@@ -54,7 +54,7 @@ const meta = computed<GuardMeta | null>(() => {
   display: inline-block;
   padding: 1px 5px;
   border-radius: 5px;
-  font-size: 9px;
+  font-size: var(--danmaku-badge-size, 9px);
   font-weight: 680;
   line-height: 1.45;
   letter-spacing: 0.3px;
