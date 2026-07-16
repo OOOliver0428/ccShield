@@ -20,6 +20,8 @@ export interface UserInfo {
   mid: number;
 }
 
+export const AUTH_EXPIRED_MESSAGE = "B站登录已过期，请重新扫码登录";
+
 export const useAuthStore = defineStore("auth", () => {
   const status = ref<AuthStatus>("loading");
   const token = ref<string>("");
@@ -27,6 +29,7 @@ export const useAuthStore = defineStore("auth", () => {
   const qrcodeUrl = ref<string>("");
   const qrKey = ref<string>("");
   const qrPollStatus = ref<QrPollStatus>(null);
+  const expiredMessage = ref<string | null>(null);
 
   let pollHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -41,17 +44,36 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  function markExpired(message: string = AUTH_EXPIRED_MESSAGE): void {
+    // Several in-flight room/moderation requests can all observe the same
+    // expiry. Only the first transition owns cleanup; a later 401 must not
+    // stop the fresh QR polling that has already started on the login page.
+    if (status.value === "expired") return;
+    stopPolling();
+    status.value = "expired";
+    userInfo.value = null;
+    expiredMessage.value = message;
+    qrcodeUrl.value = "";
+    qrKey.value = "";
+    qrPollStatus.value = null;
+  }
+
   async function fetchStatus(): Promise<void> {
     const response = await httpClient.get<{ state: string }>("/auth/status");
     const next = response.data.state;
     if (next === "authenticated") {
       status.value = "authenticated";
+      expiredMessage.value = null;
     } else if (next === "needs_login") {
       status.value = "needs_login";
+      userInfo.value = null;
+      expiredMessage.value = null;
     } else if (next === "expired") {
-      status.value = "expired";
+      markExpired();
     } else {
       status.value = "needs_login";
+      userInfo.value = null;
+      expiredMessage.value = null;
     }
   }
 
@@ -133,7 +155,9 @@ export const useAuthStore = defineStore("auth", () => {
     qrcodeUrl,
     qrKey,
     qrPollStatus,
+    expiredMessage,
     setToken,
+    markExpired,
     fetchStatus,
     fetchMe,
     startQr,

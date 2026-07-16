@@ -299,6 +299,19 @@ def test_on_expired_grows_callback_list_in_insertion_order() -> None:
     assert session._on_expired_callbacks == [first, second]
 
 
+def test_remove_on_expired_unregisters_callback_idempotently() -> None:
+    session = AuthSession(AsyncMock(), "sess", "jct")
+
+    async def callback() -> None:
+        return None
+
+    session.on_expired(callback)
+    session.remove_on_expired(callback)
+    session.remove_on_expired(callback)
+
+    assert session._on_expired_callbacks == []
+
+
 def test_on_expired_requires_async_callable() -> None:
     """Registered callbacks must be async (coroutine functions).
 

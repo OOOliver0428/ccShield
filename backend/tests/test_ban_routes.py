@@ -372,7 +372,29 @@ def test_post_ban_auth_expired_returns_401_and_fires_handle_auth_expired(
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 401
+    assert response.json()["detail"] == {
+        "code": "BILI_AUTH_EXPIRED",
+        "message": "B站登录已过期，请重新扫码登录",  # noqa: RUF001
+    }
     mock_auth_session.handle_auth_expired.assert_awaited_once()
+
+
+def test_post_ban_after_expiry_is_stable_401_not_server_error(
+    client: TestClient,
+    fake_bili_client: AsyncMock,
+    mock_auth_session: MagicMock,
+) -> None:
+    mock_auth_session.state = AuthState.EXPIRED
+
+    response = client.post(
+        "/api/ban",
+        json={"room_id": 22210347, "uid": 42, "hour": 2},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "BILI_AUTH_EXPIRED"
+    fake_bili_client.ban_user.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

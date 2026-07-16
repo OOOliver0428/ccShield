@@ -60,6 +60,7 @@ def mock_auth_session(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     session.mark_authenticated_after_login = AsyncMock(
         return_value=AuthState.NEEDS_LOGIN
     )
+    session.handle_auth_expired = AsyncMock(return_value=None)
 
     def _require() -> None:
         if session.state != AuthState.AUTHENTICATED:
@@ -573,6 +574,8 @@ def test_auth_me_returns_401_when_nav_returns_no_data(
         headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
     )
     assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "BILI_AUTH_EXPIRED"
+    mock_auth_session.handle_auth_expired.assert_awaited_once()
 
 
 def test_auth_me_returns_401_when_nav_payload_malformed(

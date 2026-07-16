@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
+import { ElMessage } from "element-plus";
 import { http, HttpResponse } from "msw";
 import { server } from "./__tests__/setup";
 import { useAuthStore } from "./stores/auth";
@@ -329,6 +330,72 @@ describe("App.vue — ban-WS lifecycle (T19)", () => {
 
     expect(banStore.banList).toHaveLength(0);
     expect(wrapper.find('[data-testid="ban-list"]').exists()).toBe(false);
+  });
+
+  it("server-side Cookie expiry closes the workspace and opens QR login", async () => {
+    let authState = "authenticated";
+    server.use(
+      http.get("*/api/auth/status", () =>
+        HttpResponse.json({ state: authState }),
+      ),
+      http.post("*/api/auth/qr/start", () =>
+        HttpResponse.json({
+          qrcode_url: "https://example.test/expired-login",
+          qrcode_key: "expired-key",
+        }),
+      ),
+      http.get("*/api/auth/qr/poll", () =>
+        HttpResponse.json({ status: "scanning" }),
+      ),
+    );
+    const warning = vi
+      .spyOn(ElMessage, "warning")
+      .mockReturnValue({ close: vi.fn() });
+    const auth = useAuthStore();
+    auth.status = "authenticated";
+    auth.token = "local-tok";
+    auth.userInfo = { uname: "moderator", mid: 7 };
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const room = useRoomStore();
+    room.currentRoomId = 1601605;
+    room.status = "connected";
+    room.currentUserRole = "admin";
+    useDanmakuStore().addDanmaku({
+      type: "danmaku",
+      uid: 1,
+      uname: "viewer",
+      text: "history",
+      ts: 1_700_000_000,
+      guard_level: 0,
+      medal: null,
+    });
+    await flushPromises();
+    expect(fakeInstances).toHaveLength(2);
+
+    authState = "expired";
+    const roomWs = fakeInstances.find((item) => !item.url.includes("/banlist"));
+    expect(roomWs).toBeDefined();
+    roomWs!.simulateClose();
+    await flushPromises();
+
+    expect(auth.status).toBe("expired");
+    expect(auth.userInfo).toBeNull();
+    expect(room.status).toBe("disconnected");
+    expect(room.currentRoomId).toBeNull();
+    expect(useDanmakuStore().list).toHaveLength(0);
+    expect(useBanStore().banList).toHaveLength(0);
+    expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="session-expired-message"]').text()).toContain(
+      "重新扫码登录",
+    );
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "B站登录已过期，请重新扫码登录" }),
+    );
+    expect(fakeInstances.every((item) => item.readyState === 3)).toBe(true);
+
+    wrapper.unmount();
   });
 
   // F3 / Bug 5 regression — on initial mount, App.vue must populate

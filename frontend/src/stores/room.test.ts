@@ -128,6 +128,27 @@ describe("room store", () => {
     });
   });
 
+  it("clears room-scoped state locally after auth expiry", () => {
+    const store = useRoomStore();
+    store.currentRoomId = 1601605;
+    store.status = "connected";
+    store.resolvedTitle = "测试直播间";
+    store.resolvedUname = "主播";
+    store.resolvedShortId = 123;
+    store.currentUserRole = "admin";
+    store.error = "old error";
+
+    store.resetAfterAuthExpired();
+
+    expect(store.status).toBe("disconnected");
+    expect(store.currentRoomId).toBeNull();
+    expect(store.resolvedTitle).toBe("");
+    expect(store.resolvedUname).toBe("");
+    expect(store.resolvedShortId).toBeNull();
+    expect(store.currentUserRole).toBe("unknown");
+    expect(store.error).toBeNull();
+  });
+
   describe("applyRoomStatus (WS room_status dispatch)", () => {
     it("maps connected → connected, disconnected → disconnected", () => {
       const store = useRoomStore();

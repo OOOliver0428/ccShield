@@ -418,6 +418,41 @@ def test_start_returns_400_when_connect_fails(
     )
 
 
+def test_start_auth_expired_returns_stable_401_and_transitions_session(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session_factory: _FakeFactory,
+) -> None:
+    from app.api import room_routes
+    from app.auth import session as auth_session_module
+    from app.bilibili.exceptions import AuthExpiredError
+
+    session = fake_session_factory.make()
+    session.connect = AsyncMock(side_effect=AuthExpiredError("expired"))
+
+    async def factory_with_session(_bili: BilibiliClient) -> AsyncMock:
+        return session
+
+    handle_expired = AsyncMock(return_value=None)
+    monkeypatch.setattr(room_routes, "_make_room_session", factory_with_session)
+    monkeypatch.setattr(
+        auth_session_module.auth_session,
+        "handle_auth_expired",
+        handle_expired,
+    )
+
+    response = client.post(
+        "/api/rooms/start",
+        json={"room_id": 1601605},
+        headers={"Host": "localhost", **_bearer(settings.LOCAL_TOKEN)},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "BILI_AUTH_EXPIRED"
+    handle_expired.assert_awaited_once()
+    assert room_routes.get_room_bridge() is None
+
+
 # ---------------------------------------------------------------------------
 # 5. POST /api/rooms/stop → 200; bridge cleared.
 # ---------------------------------------------------------------------------

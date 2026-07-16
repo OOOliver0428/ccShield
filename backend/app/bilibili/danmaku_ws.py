@@ -56,6 +56,7 @@ import websockets
 from loguru import logger
 from websockets.exceptions import ConnectionClosed
 
+from app.bilibili.exceptions import AuthExpiredError
 from app.bilibili.message_buffer import (
     BufferedMessage,
     MessagePriority,
@@ -741,6 +742,10 @@ class DanmakuClient:
     async def _fetch_danmu_info(self) -> dict | None:
         try:
             return await self.bili_client.get_danmu_info(self.room_id)
+        except AuthExpiredError:
+            # Let the REST room-start boundary transition the shared auth
+            # state and return the stable BILI_AUTH_EXPIRED response.
+            raise
         except Exception as exc:
             logger.error("danmaku_ws: get_danmu_info raised: {}", exc)
             return None

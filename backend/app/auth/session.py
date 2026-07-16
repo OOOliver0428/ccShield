@@ -36,12 +36,23 @@ Design constraints:
 """
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Awaitable, Callable
 from enum import Enum
 
 from loguru import logger
 
 from app.bilibili.exceptions import AuthExpiredError
+
+AUTH_EXPIRED_CODE = "BILI_AUTH_EXPIRED"
+
+
+def auth_expired_detail(
+    message: str = "B站登录已过期，请重新扫码登录",  # noqa: RUF001
+) -> dict[str, str]:
+    """Return the stable API payload used for mid-session Cookie expiry."""
+
+    return {"code": AUTH_EXPIRED_CODE, "message": message}
 
 # ``BilibiliClient`` is imported lazily inside ``_build_singleton`` to
 # avoid coupling this module's import path to ``app.bilibili.client``
@@ -276,6 +287,12 @@ class AuthSession:
         """
         self._on_expired_callbacks.append(callback)
 
+    def remove_on_expired(self, callback: OnExpiredCallback) -> None:
+        """Remove one previously registered expiry callback if present."""
+
+        with contextlib.suppress(ValueError):
+            self._on_expired_callbacks.remove(callback)
+
     # ------------------------------------------------------------------ #
     # Mid-session expiry — invoked by C3 when any B站 API raises
     # AuthExpiredError mid-request.
@@ -357,8 +374,10 @@ auth_session: AuthSession = _build_singleton()
 
 
 __all__ = [
+    "AUTH_EXPIRED_CODE",
     "AuthSession",
     "AuthState",
     "NotAuthenticatedError",
+    "auth_expired_detail",
     "auth_session",
 ]

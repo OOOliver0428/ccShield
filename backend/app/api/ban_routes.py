@@ -43,6 +43,7 @@ preferred where the banlist wire format is heterogeneous.
 """
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Literal, cast
 
@@ -57,6 +58,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import session as auth_session_module
+from app.auth.session import auth_expired_detail
 from app.bilibili.client import BilibiliClient
 from app.bilibili.exceptions import (
     AuthExpiredError,
@@ -198,7 +200,7 @@ def _http_for_bili_error(exc: BiliApiError) -> HTTPException:
     if isinstance(exc, AuthExpiredError):
         return HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"auth expired: {exc.message}",
+            detail=auth_expired_detail(),
         )
     if isinstance(exc, PermissionDeniedError):
         return HTTPException(
@@ -445,7 +447,12 @@ async def ws_banlist_route(websocket: WebSocket, room_id: int) -> None:
     global banlist_manager
     manager: BanListManager | None = banlist_manager
     if manager is None:
-        manager = BanListManager(_get_bili_client())
+        manager = BanListManager(
+            _get_bili_client(),
+            on_auth_expired=(
+                auth_session_module.auth_session.handle_auth_expired
+            ),
+        )
         banlist_manager = manager
         # Mirror the write into the canonical T17 singleton so the
         # other side (``app.room.banlist.banlist_manager``) sees it.
@@ -455,10 +462,16 @@ async def ws_banlist_route(websocket: WebSocket, room_id: int) -> None:
     # a prior reconcile task and re-fetches the snapshot when the room
     # changes, so this is safe to call on every connect.
     if manager._room_id != room_id:
-        await manager.start(
-            room_id,
-            is_running=lambda: get_room_bridge() is not None,
-        )
+        try:
+            await manager.start(
+                room_id,
+                is_running=lambda: get_room_bridge() is not None,
+            )
+        except AuthExpiredError:
+            await auth_session_module.auth_session.handle_auth_expired()
+            with contextlib.suppress(Exception):
+                await websocket.close(code=4401, reason="BILI_AUTH_EXPIRED")
+            return
 
     async def _push(msg: BanListMessage) -> None:
         """Forward ``msg`` to the WS. Send errors are logged and swallowed."""

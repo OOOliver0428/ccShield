@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { storeToRefs } from "pinia";
-import { useAuthStore } from "./stores/auth";
+import { useAuthStore, type AuthStatus } from "./stores/auth";
 import { useRoomStore } from "./stores/room";
 import { useDanmakuStore } from "./stores/danmaku";
 import { useBanStore } from "./stores/ban";
@@ -95,12 +96,25 @@ onMounted(async () => {
 // and calling fetchMe on every transition to "authenticated" covers
 // BOTH the initial-load case (handled redundantly by the onMounted
 // block above) and the post-QR-success case (only this watcher).
-const onAuthStatusChange = (s: string): void => {
+const onAuthStatusChange = (
+  s: AuthStatus,
+  previous?: AuthStatus,
+): void => {
   if (s === "authenticated") {
     void auth.fetchMe().catch(() => {
       // Logged out between status transition and fetchMe — leave userInfo
       // null and the UI falls back to the "用户" placeholder.
     });
+    return;
+  }
+  if (s === "expired") {
+    room.resetAfterAuthExpired();
+    if (previous === "authenticated") {
+      ElMessage.warning({
+        message: "B站登录已过期，请重新扫码登录",
+        duration: 4000,
+      });
+    }
   }
 };
 watch(() => auth.status, onAuthStatusChange);
@@ -131,6 +145,11 @@ watch([currentRoomId, roomStatus], ([newId, newStatus], [oldId]) => {
       onMessage: handleBridgeEvent,
       onDisconnect: (): void => {
         wsVisible.value = true;
+        // A server-side auth-expiry cleanup closes the room bridge. Confirm
+        // the auth state before reconnecting so the login page can take over.
+        void auth.fetchStatus().catch(() => {
+          // An ordinary network outage keeps the existing reconnect policy.
+        });
       },
       onError: (): void => {
         wsVisible.value = true;

@@ -29,14 +29,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from app import __version__
 from app.api.middleware import LocalTokenMiddleware
 from app.api.router import api_router
 from app.auth import session as auth_session_module
+from app.auth.session import (
+    AuthState,
+    NotAuthenticatedError,
+    auth_expired_detail,
+)
 from app.config import settings
 
 # ---------------------------------------------------------------------------
@@ -137,6 +143,16 @@ def migrate_legacy_env(
     return True
 
 
+async def _stop_expired_authenticated_runtime() -> None:
+    """Stop room-scoped tasks after B站 rejects the active Cookie."""
+
+    # Import lazily: room_routes imports the app router during startup, while
+    # this callback only runs later after a concrete expiry transition.
+    from app.api.room_routes import stop_room_route
+
+    await stop_room_route()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown wiring.
@@ -160,7 +176,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     drains cleanly.
     """
     migrate_legacy_env()
-    await auth_session_module.auth_session.check_on_startup()
+    session = auth_session_module.auth_session
+    await session.check_on_startup()
+    session.on_expired(_stop_expired_authenticated_runtime)
     app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(15.0, connect=5.0),
         headers={"User-Agent": "reccshield/0.1.0 (+local)"},
@@ -168,6 +186,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        session.remove_on_expired(_stop_expired_authenticated_runtime)
         await app.state.http_client.aclose()
 
 
@@ -194,6 +213,21 @@ def create_app() -> FastAPI:
     # LOCAL_TOKEN + Host-guard — runs AFTER CORS so preflight OPTIONS
     # requests are answered without an Authorization header.
     app.add_middleware(LocalTokenMiddleware)
+
+    @app.exception_handler(NotAuthenticatedError)
+    async def not_authenticated_handler(
+        _request: Request,
+        exc: NotAuthenticatedError,
+    ) -> JSONResponse:
+        """Map the auth state gate to 401 instead of leaking a server 500."""
+
+        session = auth_session_module.auth_session
+        detail: object = (
+            auth_expired_detail()
+            if session.state == AuthState.EXPIRED
+            else str(exc)
+        )
+        return JSONResponse(status_code=401, content={"detail": detail})
 
     # Protected API surface. The middleware in :mod:`app.api.middleware`
     # enforces the host + token guard on every /api/* and /ws/* path.

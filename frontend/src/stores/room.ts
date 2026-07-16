@@ -133,6 +133,16 @@ export const useRoomStore = defineStore("room", () => {
     }
   }
 
+  function resetAfterAuthExpired(): void {
+    status.value = "disconnected";
+    currentRoomId.value = null;
+    resolvedTitle.value = "";
+    resolvedUname.value = "";
+    resolvedShortId.value = null;
+    currentUserRole.value = "unknown";
+    error.value = null;
+  }
+
   /**
    * Reflect a ``room_status`` event delivered by the WS into the
    * store. Only ``connected`` and ``disconnected`` map directly;
@@ -166,6 +176,7 @@ export const useRoomStore = defineStore("room", () => {
     connect,
     prepareShortcut,
     disconnect,
+    resetAfterAuthExpired,
     applyRoomStatus,
   };
 });

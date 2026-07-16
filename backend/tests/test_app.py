@@ -1,7 +1,10 @@
 """Smoke tests for the FastAPI app factory."""
 
+import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -19,6 +22,20 @@ def test_health_endpoint_returns_ok() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_expired_runtime_cleanup_stops_the_active_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api import room_routes
+    from app.main import _stop_expired_authenticated_runtime
+
+    stop_room = AsyncMock(return_value=room_routes.StopRoomResponse(ok=True))
+    monkeypatch.setattr(room_routes, "stop_room_route", stop_room)
+
+    asyncio.run(_stop_expired_authenticated_runtime())
+
+    stop_room.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth import session as auth_session_module
+from app.auth.session import AuthState, auth_expired_detail
 from app.bilibili.auth import (
     LoginIncompleteError,
     QrAwaitingConfirmError,
@@ -348,16 +349,22 @@ async def auth_me() -> MeResponse:
     """
     session = auth_session_module.auth_session
     if session.state != auth_session_module.AuthState.AUTHENTICATED:
+        detail: object = (
+            auth_expired_detail()
+            if session.state == AuthState.EXPIRED
+            else f"not authenticated (current state: {session.state.value})"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"not authenticated (current state: {session.state.value})",
+            detail=detail,
         )
 
     data: dict[str, object] | None = await session.get_current_user()
     if data is None:
+        await session.handle_auth_expired()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="not authenticated: /nav returned no data",
+            detail=auth_expired_detail(),
         )
 
     uname_obj = data.get("uname")

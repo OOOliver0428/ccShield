@@ -47,7 +47,10 @@ from fastapi import (
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.auth import session as auth_session_module
+from app.auth.session import auth_expired_detail
 from app.bilibili.client import BilibiliClient, RoomUserRole
+from app.bilibili.exceptions import AuthExpiredError
 from app.room.bridge import (
     RoomBridge,
     get_room_bridge,
@@ -228,7 +231,14 @@ async def start_room_route(body: StartRoomRequest) -> StartRoomResponse:
     bili: BilibiliClient = _get_bili_client()
     session: RoomSession = await _make_room_session(bili)
 
-    ok: bool = await session.connect(body.room_id)
+    try:
+        ok: bool = await session.connect(body.room_id)
+    except AuthExpiredError as exc:
+        await auth_session_module.auth_session.handle_auth_expired()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=auth_expired_detail(),
+        ) from exc
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

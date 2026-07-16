@@ -35,9 +35,11 @@ import struct
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
 from websockets.exceptions import ConnectionClosed
 
 from app.bilibili import protocol as proto
+from app.bilibili.exceptions import AuthExpiredError
 
 # Real sleep, captured BEFORE any test patches asyncio.sleep. Used by the
 # _yield_sleep helper to actually yield control without sleeping.
@@ -172,6 +174,17 @@ def auth_frame_proto_ver(raw: bytes) -> int:
     _total, _h, pv, pt, _seq = struct.unpack(">IHHII", raw[:16])
     assert pt == proto.AUTH, f"frame is not AUTH (got pt={pt})"
     return pv
+
+
+async def test_start_propagates_cookie_expiry_to_room_boundary() -> None:
+    from app.bilibili.danmaku_ws import DanmakuClient
+
+    bili = make_bili_client()
+    bili.get_danmu_info = AsyncMock(side_effect=AuthExpiredError("expired"))
+    client = DanmakuClient(1601605, bili)
+
+    with pytest.raises(AuthExpiredError):
+        await client.start()
 
 
 # ---------------------------------------------------------------------------

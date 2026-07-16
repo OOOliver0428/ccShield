@@ -43,6 +43,23 @@ describe("auth store", () => {
 
       expect(store.status).toBe("authenticated");
     });
+
+    it("maps state=expired and clears the stale user identity", async () => {
+      server.use(
+        http.get("*/api/auth/status", () =>
+          HttpResponse.json({ state: "expired" }),
+        ),
+      );
+      const store = useAuthStore();
+      store.status = "authenticated";
+      store.userInfo = { uname: "alice", mid: 99 };
+
+      await store.fetchStatus();
+
+      expect(store.status).toBe("expired");
+      expect(store.userInfo).toBeNull();
+      expect(store.expiredMessage).toContain("重新扫码登录");
+    });
   });
 
   describe("startQr + pollQr", () => {
@@ -176,6 +193,34 @@ describe("auth store", () => {
       // proving the failure didn't disable polling or stop propagation.
       await vi.advanceTimersByTimeAsync(2000);
       expect(pollCalls).toBeGreaterThan(1);
+    });
+
+    it("duplicate expiry responses do not stop a newly-started QR poll", async () => {
+      let pollCalls = 0;
+      server.use(
+        http.post("*/api/auth/qr/start", () =>
+          HttpResponse.json({
+            qrcode_url: "https://example.test/fresh-qr",
+            qrcode_key: "fresh-key",
+          }),
+        ),
+        http.get("*/api/auth/qr/poll", () => {
+          pollCalls += 1;
+          return HttpResponse.json({ status: "scanning" });
+        }),
+      );
+      const store = useAuthStore();
+      store.status = "authenticated";
+      store.markExpired();
+      await store.startQr();
+      const callsAfterStart = pollCalls;
+
+      store.markExpired("late duplicate response");
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(pollCalls).toBeGreaterThan(callsAfterStart);
+      expect(store.qrcodeUrl).toBe("https://example.test/fresh-qr");
+      expect(store.expiredMessage).not.toBe("late duplicate response");
     });
   });
 

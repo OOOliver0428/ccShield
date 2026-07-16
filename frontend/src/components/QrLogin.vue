@@ -133,6 +133,15 @@ async function submitManual(): Promise<void> {
       </div>
     </template>
 
+    <p
+      v-if="auth.expiredMessage"
+      class="session-expired"
+      data-testid="session-expired-message"
+      role="alert"
+    >
+      {{ auth.expiredMessage }}
+    </p>
+
     <div v-if="!showManual" class="qr-section" data-testid="qr-section">
       <div class="qr-frame">
         <img
@@ -229,6 +238,16 @@ async function submitManual(): Promise<void> {
   background: var(--cc-card-background);
   box-shadow: var(--cc-shadow-panel);
   backdrop-filter: blur(20px);
+}
+.session-expired {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(242 185 95 / 28%);
+  border-radius: 9px;
+  color: var(--cc-warning);
+  background: var(--cc-warning-soft);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .qr-login-card :deep(.el-card__header) {
   padding: 16px 18px;

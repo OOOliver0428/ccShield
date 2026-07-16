@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 
 from loguru import logger
 
+from app.bilibili.exceptions import AuthExpiredError
+
 if TYPE_CHECKING:
     from app.bilibili.client import BilibiliClient
 
@@ -287,9 +289,11 @@ class BanListManager:
         bili_client: BilibiliClient,
         *,
         _reconcile_interval: float = 60.0,
+        on_auth_expired: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.bili_client = bili_client
         self._reconcile_interval = _reconcile_interval
+        self._on_auth_expired = on_auth_expired
 
         # Local state — uid → normalized ban entry.
         self._bans: dict[int, BanEntry] = {}
@@ -349,9 +353,13 @@ class BanListManager:
         if self._reconcile_task is not None:
             task = self._reconcile_task
             self._reconcile_task = None
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # Expiry can be detected by the reconcile task itself. Its
+            # callback tears down the manager, so never cancel/await the
+            # currently executing task from inside itself.
+            if task is not asyncio.current_task():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
         self._room_id = None
         self._is_running = None
@@ -460,6 +468,15 @@ class BanListManager:
                 new_entries = await self._fetch_snapshot()
             except asyncio.CancelledError:
                 raise
+            except AuthExpiredError as exc:
+                logger.warning(
+                    "banlist reconcile: auth expired room={} err={!r}",
+                    self._room_id,
+                    exc,
+                )
+                if self._on_auth_expired is not None:
+                    await self._on_auth_expired()
+                return
             except Exception as exc:
                 logger.warning(
                     "banlist reconcile: fetch failed room={} err={!r}",

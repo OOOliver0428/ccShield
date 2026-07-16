@@ -45,6 +45,8 @@ from typing import Any, cast
 
 import pytest
 
+from app.bilibili.exceptions import AuthExpiredError
+
 # The module under test does NOT exist yet — this import is the
 # failing-first proof. Once ``app/room/banlist.py`` lands the rest of
 # this file exercises the 9 invariants.
@@ -520,6 +522,44 @@ async def test_fetch_snapshot_passes_is_running_callback_to_client() -> None:
             assert call["is_running"] is is_running
     finally:
         await mgr.stop()
+
+
+async def test_reconcile_expiry_runs_cleanup_without_self_await_deadlock() -> None:
+    from app.room.banlist import BanListManager
+
+    class ExpiringClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_ban_list(
+            self,
+            _room_id: int,
+            *,
+            is_running: Any = None,
+        ) -> list[dict[str, Any]]:
+            del is_running
+            self.calls += 1
+            if self.calls == 1:
+                return []
+            raise AuthExpiredError("expired")
+
+    expired = asyncio.Event()
+    manager: BanListManager
+
+    async def on_auth_expired() -> None:
+        await manager.stop()
+        expired.set()
+
+    manager = BanListManager(
+        cast("Any", ExpiringClient()),
+        _reconcile_interval=0.01,
+        on_auth_expired=on_auth_expired,
+    )
+    await manager.start(room_id=1601605, is_running=lambda: True)
+
+    assert await _wait_for(expired.is_set)
+    assert manager._reconcile_task is None
+    assert manager._room_id is None
 
 
 # ---------------------------------------------------------------------------
