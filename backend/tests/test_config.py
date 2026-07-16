@@ -128,6 +128,13 @@ def test_missing_env_file_uses_empty_defaults(tmp_path: Path) -> None:
     assert s.DEBUG is False
 
 
+def test_packaged_data_dir_is_selected_without_pyinstaller_branch() -> None:
+    source = CONFIG_FILE.read_text(encoding="utf-8")
+
+    assert 'os.environ.get("CCSHIELD_DATA_DIR", _PROJECT_ROOT)' in source
+    assert "DATA_DIR / \".env\"" in source
+
+
 # --------------------------------------------------------------------------- #
 # Test 6 — No dual-path / PyInstaller logic in the config module.
 # --------------------------------------------------------------------------- #

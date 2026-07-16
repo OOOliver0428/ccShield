@@ -22,6 +22,8 @@ pytest-results.xml
 # Node
 node_modules/
 dist/
+/build/
+/release-artifacts/
 
 # Env / secrets — keep .env.example tracked, ignore everything else
 .env

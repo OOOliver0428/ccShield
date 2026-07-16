@@ -1,5 +1,19 @@
 # 冒烟测试
 
+## 自动化成品冒烟（默认且安全）
+
+v2.1.0 的 Windows Release 在本地和 GitHub Actions 中运行以下命令：
+
+```powershell
+.\dist\ccShield\ccShield.exe --smoke-test --no-browser --port 18765 --data-dir <临时目录>
+```
+
+它只验证本地 `/health`、内置前端、登录令牌引导和未启动房间的 WebSocket 握手。测试使用房间号 `0`，不会调用房间启动接口，不会连接 B站，也不会执行禁言、解禁或其他房管写操作。该检查是每个 Release 的强制门槛。
+
+下面的流程属于可选人工 live 验证，不会由 CI 或发布脚本自动运行。涉及真实登录、房间、禁言或解禁前，必须先明确测试账号、房间、目标用户、操作期限和恢复方案，并获得维护者确认。
+
+## 可选人工 live 验证
+
 Manual end-to-end check that the tool is actually usable: QR login, real
 danmaku, real SC/guard/medal data, manual ban + WS-push, manual unban.
 

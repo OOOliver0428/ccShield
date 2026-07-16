@@ -32,6 +32,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app import __version__
@@ -68,6 +69,20 @@ def _default_repo_root() -> Path:
     the real on-disk tree.
     """
     return Path(__file__).resolve().parent.parent.parent
+
+
+def _frontend_static_dir() -> Path:
+    """Return the Vite build directory for the current runtime.
+
+    The packaged launcher supplies an explicit bundle path. Source builds use
+    ``frontend/dist`` when it exists, while backend-only test runs continue to
+    work without building the frontend first.
+    """
+
+    configured = os.environ.get("CCSHIELD_STATIC_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return _default_repo_root() / "frontend" / "dist"
 
 
 def migrate_legacy_env(
@@ -175,7 +190,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Shutdown: close the ``httpx.AsyncClient`` so its connection pool
     drains cleanly.
     """
-    migrate_legacy_env()
+    if os.environ.get("CCSHIELD_RELEASE") != "1":
+        migrate_legacy_env()
     session = auth_session_module.auth_session
     await session.check_on_startup()
     session.on_expired(_stop_expired_authenticated_runtime)
@@ -243,6 +259,19 @@ def create_app() -> FastAPI:
         token.
         """
         return {"status": "ok"}
+
+    static_dir = _frontend_static_dir()
+    if (static_dir / "index.html").is_file():
+        # Mounted last so /api, /docs and /health keep their FastAPI routes.
+        # StaticFiles handles the Vite assets, favicon and brand directory from
+        # the same origin, eliminating CORS and Vite from the release runtime.
+        app.mount(
+            "/",
+            StaticFiles(directory=static_dir, html=True),
+            name="frontend",
+        )
+    else:
+        logger.debug("create_app: frontend build not found at {}", static_dir)
 
     logger.info(
         "create_app: ccShield backend v{} ready (cors_origins={!r}, "

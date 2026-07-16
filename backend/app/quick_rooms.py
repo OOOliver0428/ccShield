@@ -15,8 +15,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_QUICK_ROOMS_PATH = PROJECT_ROOT / "config" / "quick_rooms.json"
+from app.config import DATA_DIR
+
+DEFAULT_QUICK_ROOMS_PATH = DATA_DIR / "config" / "quick_rooms.json"
 
 
 class QuickRoomRecord(BaseModel):

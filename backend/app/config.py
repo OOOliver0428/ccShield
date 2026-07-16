@@ -1,9 +1,10 @@
-"""Application configuration — single-path pydantic-settings loader.
+"""Application configuration for source and packaged runtimes.
 
-This module deliberately does NOT branch on PyInstaller's bundled-binary
-detection or walk multiple candidate .env paths. The tool ships as a
-runnable Python process (uv run), so there is exactly one canonical .env
-location: the project root, two levels above this file (``<repo>/.env``).
+There is one canonical data directory per process. Source runs default to the
+repository root; the packaged launcher sets ``CCSHIELD_DATA_DIR`` to the
+current user's local application-data directory before importing the app.
+Configuration code therefore remains independent from PyInstaller internals
+and never walks a list of ambiguous candidate paths.
 
 Anti-pattern reference: the previous-generation config walked four
 candidate .env paths and loaded via python-dotenv only when present.
@@ -12,6 +13,7 @@ missing files silently fall through to declared defaults.
 """
 from __future__ import annotations
 
+import os
 import secrets
 from pathlib import Path
 
@@ -20,7 +22,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Project root is the parent of ``backend/``, i.e. ``<repo>/``.
 # This file lives at ``<repo>/backend/app/config.py`` → three levels up.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_ENV_FILE = _PROJECT_ROOT / ".env"
+DATA_DIR = Path(os.environ.get("CCSHIELD_DATA_DIR", _PROJECT_ROOT)).expanduser().resolve()
+_ENV_FILE = DATA_DIR / ".env"
 
 # Process-lifetime cache for LOCAL_TOKEN. Module-level so the value persists
 # across all Settings instances and all accesses — NOT regenerated per request.

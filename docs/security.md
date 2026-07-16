@@ -1,7 +1,7 @@
 # Security model
 
-This is a self-use B站 moderator tool. It runs as `uvicorn` on the developer's
-own machine, binds the loopback interface only, and trusts no network
+This is a self-use B站 moderator tool. It runs as a local FastAPI service on the
+user's own machine, binds the loopback interface only, and trusts no network
 attacker. It does, however, hold a real B站 session cookie (SESSDATA,
 bili_jct, buvid3) in plain text on disk so the QR login does not need to
 repeat every restart.
@@ -11,20 +11,20 @@ and what is out of scope.
 
 ## Bind surface
 
-The server is **hard-pinned to `127.0.0.1`** in `backend/app/config.py`:
+The server defaults to **`127.0.0.1`** in `backend/app/config.py`:
 
 ```python
 HOST: str = "127.0.0.1"
 PORT: int = 8000
 ```
 
-`uvicorn` is invoked as `app.main:app --host 127.0.0.1 --port 8000`. There
-is no host override; if you set `HOST=` in `.env` to anything other than a
-loopback alias, the binding will either fail or (worse) succeed against a
-non-loopback interface. Don't do that.
+The source launcher starts uvicorn on that address. The Windows Release
+launcher forces `127.0.0.1` and selects an available local port starting at
+8000. Source users can override `HOST`, but setting it to a non-loopback
+address exposes the management API to the network and is unsupported.
 
-CORS is locked to the same loopback surface for both the Vite dev port
-(`5173`) and the FastAPI port (`8000`):
+CORS is locked to the loopback development origins for Vite (`5173`) and the
+default FastAPI port (`8000`):
 
 ```
 http://localhost:5173
@@ -33,8 +33,10 @@ http://localhost:8000
 http://127.0.0.1:8000
 ```
 
-A browser cross-origin request from any non-listed origin is rejected by
-the CORS preflight before it hits the handlers.
+A browser cross-origin request from any non-listed origin is rejected by the
+CORS preflight before it hits the handlers. The Release frontend is served by
+FastAPI on the same dynamically selected origin, so it does not require an
+additional CORS origin.
 
 ## LOCAL_TOKEN
 
@@ -83,8 +85,9 @@ The token serves three purposes at once:
 
 The **only credential this tool holds is the B站 cookie**:
 `SESSDATA`, `bili_jct`, and optional `buvid3`. It is acquired through the
-QR login flow (`getQrCode` → `pollQr` → `applyCookieHeaders`) and written
-to `<repo-root>/.env` as plain text via `pydantic-settings`.
+QR login flow (`getQrCode` → `pollQr` → `applyCookieHeaders`) and written as
+plain text. Source mode uses `<repo-root>/.env`; Windows Release mode uses
+`%LOCALAPPDATA%\ccShield\.env`.
 
 Plain text on disk is the **accepted risk**: this is a single-user local
 tool, the cookie is rotated by re-scanning the QR if it leaks, and
@@ -155,7 +158,7 @@ strings are not reproduced here. Read
    `LOCAL_TOKEN`.** The browser same-origin policy plus the
    `Host`-header check on `/api/auth/bootstrap` already block this.
 
-3. **Another local process on the same machine reading `~/.env`.** This
+3. **Another local process on the same machine reading the local `.env`.** This
    is the one we don't defend against. A hostile local process with file
    read access can read `.env`, read memory of the running uvicorn
    process, sniff loopback traffic, or do anything else a local user

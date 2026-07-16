@@ -24,6 +24,29 @@ def test_health_endpoint_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_release_static_build_is_served_from_same_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    static_dir = tmp_path / "frontend-dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text(
+        "<html><body>ccShield packaged UI</body></html>",
+        encoding="utf-8",
+    )
+    (static_dir / "favicon.png").write_bytes(b"fake-png")
+    monkeypatch.setenv("CCSHIELD_STATIC_DIR", str(static_dir))
+
+    client = TestClient(create_app())
+    root = client.get("/")
+    favicon = client.get("/favicon.png")
+
+    assert root.status_code == 200
+    assert "ccShield packaged UI" in root.text
+    assert favicon.status_code == 200
+    assert favicon.content == b"fake-png"
+
+
 def test_expired_runtime_cleanup_stops_the_active_room(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

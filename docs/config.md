@@ -1,123 +1,57 @@
-# Configuration
+# 配置与本地数据
 
-This tool has exactly one source of configuration: the project-root
-`.env` file. There is no PyInstaller bundle, no per-user config dir, no
-environment-specific overlay, no second path. If you need a different
-value, you edit `.env` and restart the process.
+ccShield 的源码运行版和 Windows Release 使用同一组配置键，但数据目录不同。两种模式都只在本机保存 Cookie 和快捷房间，不应将这些文件提交到 Git。
 
-## Path
+## Windows Release
 
-The `.env` file lives at the repo root: `<repo>/.env`.
+免安装版将用户数据保存在：
 
-Concretely, with `backend/app/config.py` at
-`<repo>/backend/app/config.py`, the file is resolved as:
-
-```python
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_ENV_FILE = _PROJECT_ROOT / ".env"
+```text
+%LOCALAPPDATA%\ccShield
+├── .env
+├── config\quick_rooms.json
+└── logs\ccshield.log
 ```
 
-`pydantic-settings` loads it via `SettingsConfigDict(env_file=...)`.
-Missing files fall through to declared defaults, so a fresh clone
-starts up cleanly with empty cookies and prompts the QR login.
+程序目录只包含只读运行文件。首次启动会在用户数据目录创建必要文件，并通过页面引导扫码登录。Release 不会自动读取或迁移源码仓库中的 `.env` 与快捷房间，避免意外复制个人凭据。
 
-## Keys
+## 源码运行版
 
-| Key | Required | Default | Purpose |
+源码模式默认使用仓库根目录作为数据目录：
+
+```text
+<repo>/.env
+<repo>/config/quick_rooms.json
+```
+
+缺少 `.env` 时会使用安全默认值并进入扫码登录流程。`.env`、`config/quick_rooms.json` 均已被 `.gitignore` 和 CI 安全检查排除，仓库只提交 `.env.example` 与 `config/quick_rooms.example.json`。
+
+## 配置键
+
+| 键 | 必需 | 默认值 | 用途 |
 | --- | --- | --- | --- |
-| `SESSDATA` | yes (for login) | `""` | B站 session cookie, QR-acquired. |
-| `BILI_JCT` | yes (for login) | `""` | B站 CSRF token, paired with SESSDATA. |
-| `BUVID3` | no | `None` | Optional device cookie for some endpoints. |
-| `ROOM_ID` | no | `None` | Default target room id at startup. |
-| `HOST` | no | `127.0.0.1` | Bind address. See security note below. |
-| `PORT` | no | `8000` | Bind port for the FastAPI app. |
+| `SESSDATA` | 登录后需要 | `""` | B站会话 Cookie，由扫码登录写入。 |
+| `BILI_JCT` | 登录后需要 | `""` | B站 CSRF Cookie，与 SESSDATA 配套。 |
+| `BUVID3` | 否 | 空 | 部分接口使用的可选设备 Cookie。 |
+| `ROOM_ID` | 否 | 空 | 启动时的默认目标房间号。 |
+| `HOST` | 否 | `127.0.0.1` | FastAPI 监听地址。 |
+| `PORT` | 否 | `8000` | FastAPI 起始端口。 |
+| `DEBUG` | 否 | `false` | 后端调试模式。 |
 
-All fields are read case-sensitively (`case_sensitive=True` in
-`SettingsConfigDict`). Keys must be spelled exactly as above.
+字段名区分大小写，其他键会被忽略。源码模式编辑 `.env` 后需要重启应用；Release 通常由扫码登录自动维护 Cookie，无需手动编辑。
 
-Anything else in `.env` is ignored (`extra="ignore"`).
+## 路径覆盖（开发与测试）
 
-## What is NOT supported
+`CCSHIELD_DATA_DIR` 可覆盖源码模式的数据目录，`CCSHIELD_STATIC_DIR` 可指定 FastAPI 提供的前端构建目录。它们主要用于打包和自动化测试，不建议普通用户手动设置。
 
-- **PyInstaller / frozen dual-path.** The original ccShield config
-  walked four candidate `.env` paths so a bundled executable could find
-  one. ccShield currently ships as a runnable Python process (`uv run`), so the
-  candidate-path logic is gone. Adding it back later (if/when there's a
-  real reason to) is the only deprecation I expect on this file. Don't
-  add a `sys.frozen` branch preemptively.
-- **Per-user config in `~/.config/ccshield`.** Not needed for single
-  user. Same answer as above: don't add it preemptively.
-- **`.env.local`, `.env.production`, Next-style overlays.** One file,
-  one environment. Keep it boring.
+Release 启动器会设置 `CCSHIELD_RELEASE=1`，并将数据目录固定到当前用户的本地应用数据目录。该模式不会执行旧版仓库 `.env` 迁移。
 
-## `.env.example`
+## 快捷房间
 
-The template is committed: `<repo>/.env.example`. All values are
-empty or set to documented defaults:
+快捷房间属于个人状态。源码模式保存到 `<repo>/config/quick_rooms.json`，Release 保存到 `%LOCALAPPDATA%\ccShield\config\quick_rooms.json`。关闭 ccShield 后可以手动编辑该文件删除条目。
 
-```sh
-# Bilibili authentication cookies
-SESSDATA=
-BILI_JCT=
-BUVID3=
+## 网络安全
 
-# Target live room
-ROOM_ID=
+默认 `HOST=127.0.0.1` 是安全边界的一部分：管理页面、登录令牌和房管 API 只对当前计算机开放。不要轻易改为 `0.0.0.0`；这会把管理界面暴露给局域网，并需要同步重新设计 CORS 和本地令牌校验。
 
-# Server bind
-HOST=127.0.0.1
-PORT=8000
-```
-
-Copy it to `.env`, fill in real values. Don't commit `.env`.
-
-`.gitignore` does the obvious thing:
-
-```gitignore
-.env
-.env.*
-!.env.example
-```
-
-## User-local shortcut state
-
-Quick-room shortcuts are separate user state, not application settings. They are
-stored in `<repo>/config/quick_rooms.json`; the file is created on first use and
-must stay on the user's machine. Only the empty/example structure at
-`config/quick_rooms.example.json` is committed.
-
-Both `.env` and `config/quick_rooms.json` are ignored by Git. The CI secret gate
-also rejects these exact paths if somebody bypasses `.gitignore` with a forced
-add, so personal cookies and shortcut-room choices cannot be included in a
-normal release commit.
-
-## Security note on `HOST`
-
-The default `HOST=127.0.0.1` is part of the threat model in
-`docs/security.md`, not just a convenience. Changing it to `0.0.0.0`
-exposes the moderator UI (and the `LOCAL_TOKEN` bootstrap endpoint) to
-the LAN. Only override `HOST` to a non-loopback alias if you
-understand and accept:
-
-1. Any host on the network can reach the API.
-2. The `/api/auth/bootstrap` endpoint's loopback-only check no longer
-   applies; the `LOCAL_TOKEN` is readable by anyone who can issue a
-   `GET /api/auth/bootstrap` from the host with the right `Host`
-   header.
-3. CORS widens accordingly. The current CORS list is hardcoded to
-   loopback aliases; it does **not** widen when you change `HOST`.
-
-If you need a non-loopback bind, the CORS list and the bootstrap-host
-check both need to change in lockstep, and that change needs the same
-threat-model conversation that this file is deferring.
-
-## Editing at runtime
-
-`pydantic-settings` reads `.env` once at construction. `Settings()` is a
-module-level singleton, so it's constructed once on first import.
-Editing `.env` while uvicorn is running does not pick up new values;
-restart the process.
-
-`LOCAL_TOKEN` is generated lazily on first property access and cached at
-module scope. Restarting the process gives a fresh token; existing tabs
-lose their bootstrap token and must re-bootstrap.
+`LOCAL_TOKEN` 在每次进程启动时随机生成并只在内存中保存。重启应用后，旧页面需要重新获取令牌。

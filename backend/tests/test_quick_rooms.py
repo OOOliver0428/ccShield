@@ -11,10 +11,17 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.quick_rooms import (
+    DEFAULT_QUICK_ROOMS_PATH,
     QuickRoomConfigError,
     QuickRoomRecord,
     QuickRoomStore,
 )
+
+
+def test_default_store_uses_shared_application_data_directory() -> None:
+    from app.config import DATA_DIR
+
+    assert DEFAULT_QUICK_ROOMS_PATH == DATA_DIR / "config" / "quick_rooms.json"
 
 
 def _record(room_id: int = 1601605, *, title: str = "测试直播") -> QuickRoomRecord:
